@@ -232,7 +232,10 @@ function go(tab, opts = {}) {
 async function route() {
   const h = decodeURIComponent(location.hash.slice(1)); if (!h || !S.me) return;
   history.replaceState(null, '', location.pathname);
-  const [kind, id] = h.split('/');
+  routeTo(h);
+}
+function routeTo(h) {
+  const [kind, id] = String(h).split('/');
   if (kind === 'game' && id) openGame(id);
   else if (kind === 'team' && id) openTeam(id);
   else if (kind === 'chat' && id) openThread(id);
@@ -577,7 +580,7 @@ function closeOverlay() { $('#overlay').innerHTML = '' }
 /* ================= Notifications ================= */
 function openNotifs(markRead = true) {
   const list = S.notifs;
-  const body = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Notifications</h2>${list.length ? '<button class="link" onclick="clearNotifs()">Clear all</button>' : ''}</div>${pushBanner()}${list.map(n => `<button class="notif ${n.read ? '' : 'new'}" onclick="closeSheet();location.hash='${esc(n.link || '')}'"><span class="nicon">${{ join: '＋', confirm: '✓', final: '★', disputed: '!', reminder: '◷', team: '⚑' }[n.type] || '•'}</span><span><strong>${esc(n.title)}</strong><small>${esc(n.body)}</small><small class="when">${n.at ? ago(toDate(n.at)) : ''}</small></span></button>`).join('') || '<p class="muted" style="padding:20px 0">Nothing yet. Game reminders, score confirmations and join requests show up here.</p>'}`;
+  const body = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Notifications</h2>${list.length ? '<button class="link" onclick="clearNotifs()">Clear all</button>' : ''}</div>${pushBanner()}${list.map(n => `<button class="notif ${n.read ? '' : 'new'}" onclick="closeSheet();routeTo('${esc(n.link || '')}')"><span class="nicon">${{ join: '＋', confirm: '✓', final: '★', disputed: '!', reminder: '◷', team: '⚑' }[n.type] || '•'}</span><span><strong>${esc(n.title)}</strong><small>${esc(n.body)}</small><small class="when">${n.at ? ago(toDate(n.at)) : ''}</small></span></button>`).join('') || '<p class="muted" style="padding:20px 0">Nothing yet. Game reminders, score confirmations and join requests show up here.</p>'}`;
   if ($('#notifsheet')) $('#notifsheet').innerHTML = body; else sheet(`<div id="notifsheet">${body}</div>`, 'notifs');
   if (markRead) { const unread = list.filter(n => !n.read); if (unread.length) { const b = writeBatch(db); unread.forEach(n => b.update(doc(db, 'users', S.uid, 'notifications', n.id), { read: true })); b.commit().catch(e => console.error(e)) } }
 }
@@ -753,4 +756,4 @@ $('#citysel').onchange = async e => { try { await updateDoc(doc(db, 'users', S.u
 let wide = window.innerWidth >= 960; window.addEventListener('resize', () => { if (wide !== (window.innerWidth >= 960)) { wide = !wide; render() } });
 
 // Inline onclick handlers in the templates call these.
-Object.assign(window, { go, render, S, openCreate, openGame, joinGame, leaveGame, cancelGame, postGame, respond, newPost, doWorkout, like, deletePost, share, openComments, delComment, follow, openReels, closeOverlay, editMe, doSignOut, openProfile, openThread, startGame, clockToggle, addPts, undoPts, nextPer, finish, closeSB, reopenSB, submitFromSB, closeSheet, interest, createTeam, openTeam, requestJoin, cancelRequest, approve, decline, removeMember, leaveTeam, renameTeam, shareTeam, openNotifs, clearNotifs, enablePush, moreMenu, reportSheet, blockSheet, unblock, manageBlocked });
+Object.assign(window, { go, render, S, routeTo, openCreate, openGame, joinGame, leaveGame, cancelGame, postGame, respond, newPost, doWorkout, like, deletePost, share, openComments, delComment, follow, openReels, closeOverlay, editMe, doSignOut, openProfile, openThread, startGame, clockToggle, addPts, undoPts, nextPer, finish, closeSB, reopenSB, submitFromSB, closeSheet, interest, createTeam, openTeam, requestJoin, cancelRequest, approve, decline, removeMember, leaveTeam, renameTeam, shareTeam, openNotifs, clearNotifs, enablePush, moreMenu, reportSheet, blockSheet, unblock, manageBlocked });

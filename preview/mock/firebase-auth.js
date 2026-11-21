@@ -1,0 +1,1 @@
+export { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, OAuthProvider, signInWithPopup, signOut, connectAuthEmulator } from './core.js';
