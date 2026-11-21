@@ -1,0 +1,120 @@
+rules_version = '2';
+
+// Who can read and change what in the NextMatch database.
+// Everything requires a signed-in account. People can only change their own
+// stuff; ranking points and records can only be changed from the Firebase console.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+    function str(v, lo, hi) { return v is string && v.size() >= lo && v.size() <= hi; }
+    function changedOnly(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    // The list field changed by exactly one entry: the signed-in person's own id.
+    function toggledSelf(field) {
+      let before = resource.data.get(field, []).toSet();
+      let after = request.resource.data.get(field, []).toSet();
+      return after.difference(before).union(before.difference(after)) == [request.auth.uid].toSet();
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if isMe(uid)
+        && request.resource.data.keys().hasOnly(['name', 'city', 'sports', 'rp', 'wins', 'losses', 'adult', 'createdAt'])
+        && str(request.resource.data.name, 2, 40)
+        && str(request.resource.data.city, 2, 40)
+        && request.resource.data.sports is list && request.resource.data.sports.size() <= 2
+        && request.resource.data.rp == 0 && request.resource.data.wins == 0 && request.resource.data.losses == 0
+        && request.resource.data.adult == true;
+      allow update: if isMe(uid)
+        && changedOnly(['name', 'city', 'sports', 'tournamentInterest'])
+        && str(request.resource.data.name, 2, 40)
+        && str(request.resource.data.city, 2, 40)
+        && request.resource.data.sports is list && request.resource.data.sports.size() <= 2
+        && request.resource.data.get('tournamentInterest', []).size() <= 10;
+
+      match /following/{other} {
+        allow read: if signedIn();
+        allow create: if isMe(uid) && other != uid;
+        allow delete: if isMe(uid);
+      }
+
+      // Weekly fitness challenges: one claim per challenge per week, never edited.
+      match /workouts/{wid} {
+        allow read: if isMe(uid);
+        allow create: if isMe(uid)
+          && request.resource.data.keys().hasOnly(['challenge', 'week', 'fp', 'at'])
+          && request.resource.data.challenge in ['footwork', 'handles', 'mobility']
+          && request.resource.data.fp == {'footwork': 50, 'handles': 75, 'mobility': 40}[request.resource.data.challenge]
+          && str(request.resource.data.week, 10, 10)
+          && wid == request.resource.data.week + '_' + request.resource.data.challenge;
+      }
+    }
+
+    match /games/{gid} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['hostUid', 'hostName', 'sport', 'format', 'need', 'venue', 'city', 'when', 'players', 'createdAt'])
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.players == [request.auth.uid]
+        && request.resource.data.sport in ['Basketball', 'Flag football']
+        && request.resource.data.format in ['1v1', '2v2', '3v3', '4v4', '5v5', '6v6', '7v7']
+        && str(request.resource.data.hostName, 1, 40)
+        && str(request.resource.data.need, 1, 40)
+        && str(request.resource.data.venue, 2, 100)
+        && str(request.resource.data.city, 2, 40)
+        && request.resource.data.when is timestamp;
+      // Anyone but the host can join or leave (only their own spot), up to the game's size.
+      allow update: if signedIn()
+        && resource.data.hostUid != request.auth.uid
+        && changedOnly(['players'])
+        && toggledSelf('players')
+        && request.resource.data.players.size() <= int(resource.data.format.split('v')[0]) * 2;
+      allow delete: if signedIn() && resource.data.hostUid == request.auth.uid;
+    }
+
+    match /posts/{pid} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'city', 'kind', 'caption', 'sport', 'art', 'mediaUrl', 'mediaType', 'likedBy', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.kind in ['Highlight', 'Training']
+        && str(request.resource.data.name, 1, 40)
+        && str(request.resource.data.caption, 1, 1000)
+        && request.resource.data.likedBy == [];
+      // Likes: anyone can add or remove only their own like.
+      allow update: if signedIn() && changedOnly(['likedBy']) && toggledSelf('likedBy');
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+
+      match /comments/{cid} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['uid', 'name', 'text', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && str(request.resource.data.name, 1, 40)
+          && str(request.resource.data.text, 1, 500);
+        allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      }
+    }
+
+    // Direct messages. The conversation id is the two members' ids joined by "_".
+    match /conversations/{cid} {
+      function members() { return cid.split('_'); }
+      function inConvo() { return signedIn() && members().size() == 2 && members()[0] != members()[1] && request.auth.uid in members(); }
+
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow create, update: if inConvo()
+        && request.resource.data.members == members()
+        && request.resource.data.lastUid == request.auth.uid
+        && str(request.resource.data.last, 1, 120);
+
+      match /messages/{mid} {
+        allow read: if inConvo();
+        allow create: if inConvo()
+          && request.resource.data.keys().hasOnly(['uid', 'text', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && str(request.resource.data.text, 1, 1000);
+      }
+    }
+  }
+}

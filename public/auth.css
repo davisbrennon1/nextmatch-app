@@ -1,0 +1,24 @@
+/* Sign-in, sign-up and profile setup screens, plus a few live-data additions. */
+.onb{z-index:70}
+.auth-sso{display:grid;gap:10px;margin-top:26px}
+.sso{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:14px;border-radius:999px;font-weight:700;font-size:15px}
+.sso svg{width:20px;height:20px}
+.sso-google{background:#fff;color:#1f1f1f;border:1px solid #dadce0}
+.sso-apple{background:#000;color:#fff;border:1px solid #333}
+.or{display:flex;align-items:center;gap:12px;margin:22px 0 4px;font:600 11px var(--mono);letter-spacing:1.2px;opacity:.6}
+.or::before,.or::after{content:"";flex:1;height:1px;background:currentColor;opacity:.4}
+.auth-err{margin-top:14px;padding:12px 14px;border-radius:10px;background:color-mix(in srgb,#ff4d5e 18%,transparent);color:inherit;font-size:14px;line-height:1.5}
+.auth-ok{margin-top:14px;padding:12px 14px;border-radius:10px;background:color-mix(in srgb,#33c27a 18%,transparent);font-size:14px}
+.auth-links{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:18px;font-size:14px}
+.auth-links button{color:var(--brand);font-weight:700}
+.onb .check{display:flex;gap:10px;align-items:start;margin-top:16px;font-size:14px;opacity:.9}
+.onb .check input{width:auto;margin-top:3px;accent-color:var(--brand)}
+.onb .btn-primary:disabled{opacity:.6}
+.setup-box{max-width:620px;margin:60px auto;padding:28px;background:var(--surface);border:1px solid var(--line);border-radius:16px;line-height:1.7}
+.setup-box code{font-family:var(--mono);background:var(--surface-2);padding:2px 6px;border-radius:5px}
+.loading{padding:40px 16px;text-align:center;color:var(--muted)}
+.comment{display:grid;grid-template-columns:32px minmax(0,1fr) auto;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.comment strong{font-size:13px;display:block}
+.comment p{font-size:14px;overflow-wrap:anywhere;white-space:pre-wrap}
+.roster{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.post-head .del{margin-left:8px;color:var(--muted);font-size:13px;font-weight:700}

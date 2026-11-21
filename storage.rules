@@ -1,0 +1,14 @@
+rules_version = '2';
+
+// Only used if you turn on photo and video uploads (README step 6).
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /posts/{uid}/{file} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 25 * 1024 * 1024
+        && request.resource.contentType.matches('(image|video)/.*');
+    }
+  }
+}
