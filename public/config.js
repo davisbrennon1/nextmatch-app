@@ -25,8 +25,10 @@ export const FEATURES = {
   pushKey: ""
 };
 
-// Cities people can pick. Games and players are grouped by city.
-export const CITIES = ["Austin", "Dallas", "Houston", "San Antonio"];
+// Cities people can pick: every Texas city and town (from cities.js). Games and players
+// are grouped by city. To limit the list, replace this with names, e.g. ["Austin", "Dallas"].
+import { TEXAS_CITIES } from './cities.js';
+export const CITIES = TEXAS_CITIES.map(c => c[0]);
 
 // Set to true only while testing on your own computer with the Firebase emulators.
 export const USE_EMULATORS = false;

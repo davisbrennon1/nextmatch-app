@@ -14,7 +14,7 @@ It runs the real `public/app.js` on an in-browser stand-in for Firebase with sam
 
 1. `node preview/build.mjs` (writes `preview/dist/`, which is git-ignored)
 2. Publish with the Artifact tool, passing `url` = the preview link above, `file_path` =
-   `preview/dist/index.html`, `root` = `preview/dist`, and `files` mapping each of `app.js`, `config.js`, `styles.css`,
+   `preview/dist/index.html`, `root` = `preview/dist`, and `files` mapping each of `app.js`, `cities.js`, `config.js`, `styles.css`,
    `auth.css`, `mock/core.js`, `mock/firebase-app.js`, `mock/firebase-auth.js`,
    `mock/firebase-firestore.js` to itself (e.g. `"app.js": "app.js"`). Read the artifact first
    if this session hasn't read or published it.

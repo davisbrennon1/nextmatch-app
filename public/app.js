@@ -1,4 +1,5 @@
 import { firebaseConfig, FEATURES, CITIES, USE_EMULATORS } from './config.js';
+import { TEXAS_CITIES } from './cities.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
   getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -94,6 +95,68 @@ let subs = [], citySubs = [], threadSub = null, commentSub = null, teamSubs = []
 const unsubAll = () => { [...subs, ...citySubs, ...teamSubs].forEach(u => u()); subs = []; citySubs = []; teamSubs = []; threadSub?.(); threadSub = null; sheetSub?.(); sheetSub = null };
 const myName = () => S.me?.name || 'Player';
 const myCity = () => S.me?.city || CITIES[0];
+
+/* ───────── Finding a city ───────── */
+const norm = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const CITY_LIST = TEXAS_CITIES.filter(c => CITIES.includes(c[0])).map(([name, pop, lat, lng]) => ({ name, pop, lat, lng, key: norm(name) }));
+// Exact name as stored, from whatever someone typed ("san antonio" → "San Antonio").
+const cityName = typed => CITY_LIST.find(c => c.key === norm(typed))?.name || null;
+// Matches by start of name, then start of any word, then anywhere; bigger places first.
+function findCities(q, n = 40) {
+  const k = norm(q); if (!k) return [];
+  const a = [], b = [], c = [];
+  for (const x of CITY_LIST) { if (x.key.startsWith(k)) a.push(x); else if (x.key.split(' ').some(w => w.startsWith(k))) b.push(x); else if (x.key.includes(k)) c.push(x) }
+  return [...a, ...b, ...c].slice(0, n);
+}
+function nearestCity(lat, lng) {
+  let best = null, d = Infinity;
+  for (const x of CITY_LIST) { const dy = x.lat - lat, dx = (x.lng - lng) * Math.cos(lat * Math.PI / 180), e = dx * dx + dy * dy; if (e < d) { d = e; best = x } }
+  return best;
+}
+function locateCity(done) {
+  if (!navigator.geolocation) return toast('Location isn’t available here. Type your city instead.');
+  toast('Finding your city…');
+  navigator.geolocation.getCurrentPosition(p => { const c = nearestCity(p.coords.latitude, p.coords.longitude); c ? done(c.name) : toast('Couldn’t match your location to a Texas city.') },
+    () => toast('Location isn’t available. Type your city instead.'), { timeout: 10000, maximumAge: 600000 });
+}
+const popText = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M people' : n >= 1e4 ? Math.round(n / 1e3) + 'K people' : n.toLocaleString() + ' people';
+const cityRows = list => list.map(c => `<button type="button" class="city-opt" role="option" data-city="${esc(c.name)}"><span>${esc(c.name)}</span><small>${popText(c.pop)}</small></button>`).join('');
+// An input that suggests cities as you type (used on the setup screen and in Edit profile).
+function cityField(id, value = '') {
+  return `<div class="cityfield"><input id="${id}" value="${esc(value)}" required autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-list" placeholder="Start typing your city"><button type="button" class="near" id="${id}-near">⌖ Near me</button><div class="city-sug" id="${id}-list" role="listbox" hidden></div></div>`;
+}
+function bindCityField(id) {
+  const input = document.getElementById(id), list = document.getElementById(id + '-list');
+  const show = () => { const r = findCities(input.value, 8); list.innerHTML = r.length ? cityRows(r) : `<p class="muted">No Texas city matches “${esc(input.value)}”.</p>`; list.hidden = !input.value.trim(); input.setAttribute('aria-expanded', String(!list.hidden)) };
+  const pick = name => { input.value = name; list.hidden = true; input.setAttribute('aria-expanded', 'false') };
+  input.addEventListener('input', show);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !list.hidden) { const f = list.querySelector('.city-opt'); if (f) { e.preventDefault(); pick(f.dataset.city) } } if (e.key === 'Escape') list.hidden = true });
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true }, 150));
+  list.addEventListener('mousedown', e => e.preventDefault());
+  list.addEventListener('click', e => { const b = e.target.closest('.city-opt'); if (b) pick(b.dataset.city) });
+  document.getElementById(id + '-near').onclick = () => locateCity(pick);
+}
+const recentCities = () => ls.get('recentCities', []).filter(cityName);
+function rememberCity(name) { ls.set('recentCities', [name, ...recentCities().filter(c => c !== name)].slice(0, 5)) }
+// The full-screen city finder behind the city button at the top of the app.
+function openCityPicker() {
+  const draw = q => {
+    const r = findCities(q), body = $('#citylist'); if (!body) return;
+    if (q.trim()) { body.innerHTML = r.length ? cityRows(r) : `<p class="muted" style="padding:16px 4px">No Texas city matches “${esc(q)}”. Check the spelling, or try the nearest bigger city.</p>`; return }
+    const recent = recentCities().filter(n => n !== myCity()).map(n => CITY_LIST.find(c => c.name === n));
+    body.innerHTML = (recent.length ? `<div class="label city-group">Recent</div>${cityRows(recent)}` : '') + `<div class="label city-group">Biggest cities</div>${cityRows(CITY_LIST.slice(0, 12))}`;
+  };
+  sheet(`<h2>Pick your city</h2><p class="muted">${CITY_LIST.length.toLocaleString()} Texas cities and towns. You’ll see games, teams and players there.</p><div class="city-search"><input id="cityq" type="search" autocomplete="off" placeholder="Search for a city, e.g. Waco" aria-label="Search Texas cities" aria-controls="citylist"><button type="button" class="btn btn-ghost btn-sm" id="citynear">⌖ Near me</button></div><div class="label city-group">Now showing: ${esc(myCity())}</div><div id="citylist" class="city-list" role="listbox" aria-label="Cities"></div>`, 'city');
+  const q = $('#cityq'); draw('');
+  q.oninput = () => draw(q.value);
+  q.onkeydown = e => { if (e.key === 'Enter') { const f = $('#citylist .city-opt'); if (f) { e.preventDefault(); setCity(f.dataset.city) } } };
+  $('#citylist').onclick = e => { const b = e.target.closest('.city-opt'); if (b) setCity(b.dataset.city) };
+  $('#citynear').onclick = () => locateCity(setCity);
+}
+async function setCity(name) {
+  closeSheet(); if (!name || name === myCity()) return;
+  try { await updateDoc(doc(db, 'users', S.uid), { city: name }); rememberCity(name); toast('Showing ' + name + '.') } catch (x) { console.error(x); toast('Couldn’t change city.') }
+}
 const first = () => myName().split(' ')[0];
 const fail = what => err => { console.error(what, err); toast(err?.code === 'failed-precondition' ? `The ${what} list is still being set up. Try again in a few minutes.` : `Couldn’t load ${what}. Check your connection and refresh.`) };
 
@@ -161,27 +224,32 @@ async function sso(kind, btn) {
 
 /* First sign-in: pick a player name, city and sports. */
 function renderSetup(user, msg = '') {
-  const picked = new Set(['Basketball']);
+  // Keep what they already typed when showing an error.
+  const draft = $('#setupform') ? { name: $('#s-name').value, city: $('#s-city').value, sports: [...document.querySelectorAll('#s-sports .chip.on')].map(b => b.dataset.s), adult: $('#s-adult').checked } : { name: (user.displayName || '').slice(0, 40), city: '', sports: ['Basketball'], adult: false };
+  const picked = new Set(draft.sports);
   showGate(`<div class="wordmark"><i></i>NextMatch</div><h1>Set up your <span>player card.</span></h1><p>This is what other players see. You can change it later.</p>
   <form id="setupform">
-    <label class="field" for="s-name"><span>Player name</span><input id="s-name" required minlength="2" maxlength="40" autocomplete="nickname" value="${esc((user.displayName || '').slice(0, 40))}"></label>
-    <label class="field" for="s-city"><span>Home city</span><select id="s-city">${CITIES.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+    <label class="field" for="s-name"><span>Player name</span><input id="s-name" required minlength="2" maxlength="40" autocomplete="nickname" value="${esc(draft.name)}"></label>
+    <label class="field" for="s-city"><span>Home city</span></label>${cityField('s-city', draft.city)}
     <label class="field"><span>What do you play?</span></label>
     <div class="chips" id="s-sports">${SPORTS.map(s => `<button type="button" class="chip ${picked.has(s) ? 'on' : ''}" aria-pressed="${picked.has(s)}" data-s="${s}"><span class="dot ${sportCls(s)}"></span>${s}</button>`).join('')}</div>
-    <label class="check" for="s-adult"><input id="s-adult" type="checkbox" required>I’m 18 or older and agree to play fair and respect other players.</label>
+    <label class="check" for="s-adult"><input id="s-adult" type="checkbox" required ${draft.adult ? 'checked' : ''}>I’m 18 or older and agree to play fair and respect other players.</label>
     <button class="btn btn-primary" id="s-go">Let’s play →</button>
   </form>${msg ? `<div class="auth-err" role="alert">${esc(msg)}</div>` : ''}
   <div class="auth-links"><button id="s-out">Use a different account</button></div>`);
+  bindCityField('s-city');
   $('#s-sports').querySelectorAll('.chip').forEach(b => b.onclick = () => { b.classList.toggle('on'); b.setAttribute('aria-pressed', b.classList.contains('on')) });
   $('#s-out').onclick = () => signOut(auth);
   $('#setupform').onsubmit = async e => {
     e.preventDefault();
     const name = $('#s-name').value.trim().replace(/\s+/g, ' '), sports = [...document.querySelectorAll('#s-sports .chip.on')].map(b => b.dataset.s);
     if (name.length < 2) return renderSetup(user, 'Enter a player name with at least 2 characters.');
+    const city = cityName($('#s-city').value);
+    if (!city) return renderSetup(user, 'Pick your home city from the list of Texas cities.');
     if (!$('#s-adult').checked) return renderSetup(user, 'NextMatch is for adults 18 and older.');
     $('#s-go').disabled = true;
     try {
-      await setDoc(doc(db, 'users', user.uid), { name, city: $('#s-city').value, sports: sports.length ? sports : ['Basketball'], rp: 0, wins: 0, losses: 0, adult: true, createdAt: serverTimestamp() });
+      await setDoc(doc(db, 'users', user.uid), { name, city, sports: sports.length ? sports : ['Basketball'], rp: 0, wins: 0, losses: 0, adult: true, createdAt: serverTimestamp() });
       enterApp(user);
     } catch (err) { console.error(err); renderSetup(user, 'Couldn’t save your profile. Check your connection and try again.') }
   };
@@ -200,7 +268,6 @@ onAuthStateChanged(auth, async user => {
 function enterApp(user, data) {
   S.me = data ? { id: user.uid, ...data } : S.me;
   $('#gate').hidden = true; $('#app').hidden = false; $('#tabbar').hidden = false;
-  $('#citysel').innerHTML = CITIES.map(c => `<option>${esc(c)}</option>`).join('');
   subs.push(onSnapshot(doc(db, 'users', S.uid), d => { if (d.exists()) { const cityChanged = S.me?.city !== d.data().city; S.me = { id: S.uid, ...d.data() }; if (cityChanged || !citySubs.length) subscribeCity(); renderSoon() } }, fail('your profile')));
   subs.push(onSnapshot(query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(60)), q => { S.posts = q.docs.map(d => ({ id: d.id, ...d.data() })); S.loaded.posts = true; renderSoon() }, fail('posts')));
   subs.push(onSnapshot(collection(db, 'users', S.uid, 'following'), q => { S.following = new Set(q.docs.map(d => d.id)); renderSoon() }, fail('follows')));
@@ -257,7 +324,7 @@ function shell() {
   const unread = S.convos.filter(c => isUnread(c) && !S.blocked.has(otherOf(c))).length, bell = S.notifs.filter(n => !n.read).length;
   $('#btn-msg').innerHTML = ic('msg') + (unread ? `<span class="badge-count">${unread}</span>` : '');
   $('#btn-bell').innerHTML = ic('bell') + (bell ? `<span class="badge-count">${bell > 9 ? '9+' : bell}</span>` : '');
-  if (document.activeElement !== $('#citysel')) $('#citysel').value = myCity();
+  $('#cityname').textContent = myCity();
 }
 function render() {
   if (!S.me || $('#app').hidden) return;
@@ -696,9 +763,10 @@ function meSide() {
 function manageBlocked() { ensureUsers([...S.blocked]); sheet(`<h2>Blocked players</h2>${[...S.blocked].map(u => `<div class="team-row">${avatar(nameOf(u))}<div><strong>${esc(nameOf(u))}</strong></div><button class="btn btn-ghost btn-sm" onclick="unblock('${u}')">Unblock</button></div>`).join('') || '<p class="muted">No one.</p>'}<div class="actions"><button class="btn btn-ghost" onclick="closeSheet()">Done</button></div>`) }
 function editMe() {
   const sp = new Set(S.me.sports || []);
-  sheet(`<h2>Edit profile</h2><form id="em"><label class="field" for="emn"><span>Player name</span><input id="emn" required minlength="2" maxlength="40" value="${esc(S.me.name)}"></label><label class="field" for="emc"><span>City</span><select id="emc">${CITIES.map(c => `<option ${c === myCity() ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label><label class="field"><span>Sports</span></label><div class="chips" id="emsp">${SPORTS.map(s => `<button type="button" class="chip ${sp.has(s) ? 'on' : ''}" data-s="${s}" aria-pressed="${sp.has(s)}">${s}</button>`).join('')}</div><p class="muted" style="font-size:12px;margin-top:12px">Posts you already made keep the name you used then.</p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary">Save</button></div></form>`);
+  sheet(`<h2>Edit profile</h2><form id="em"><label class="field" for="emn"><span>Player name</span><input id="emn" required minlength="2" maxlength="40" value="${esc(S.me.name)}"></label><label class="field" for="emc"><span>City</span></label>${cityField('emc', myCity())}<label class="field"><span>Sports</span></label><div class="chips" id="emsp">${SPORTS.map(s => `<button type="button" class="chip ${sp.has(s) ? 'on' : ''}" data-s="${s}" aria-pressed="${sp.has(s)}">${s}</button>`).join('')}</div><p class="muted" style="font-size:12px;margin-top:12px">Posts you already made keep the name you used then.</p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary">Save</button></div></form>`);
+  bindCityField('emc');
   $('#emsp').querySelectorAll('.chip').forEach(b => b.onclick = () => { b.classList.toggle('on'); b.setAttribute('aria-pressed', b.classList.contains('on')) });
-  $('#em').onsubmit = async e => { e.preventDefault(); const name = $('#emn').value.trim().replace(/\s+/g, ' '); if (name.length < 2) return toast('Name needs at least 2 characters.'); const sports = [...document.querySelectorAll('#emsp .chip.on')].map(b => b.dataset.s); try { await updateDoc(doc(db, 'users', S.uid), { name, city: $('#emc').value, sports: sports.length ? sports : ['Basketball'] }); closeSheet(); toast('Profile saved.') } catch (x) { console.error(x); toast('Couldn’t save. Try again.') } };
+  $('#em').onsubmit = async e => { e.preventDefault(); const name = $('#emn').value.trim().replace(/\s+/g, ' '); if (name.length < 2) return toast('Name needs at least 2 characters.'); const city = cityName($('#emc').value); if (!city) return toast('Pick your city from the list of Texas cities.'); const sports = [...document.querySelectorAll('#emsp .chip.on')].map(b => b.dataset.s); try { await updateDoc(doc(db, 'users', S.uid), { name, city, sports: sports.length ? sports : ['Basketball'] }); closeSheet(); toast('Profile saved.') } catch (x) { console.error(x); toast('Couldn’t save. Try again.') } };
 }
 async function doSignOut() {
   closeSheet(); S.tab = 'today';
@@ -798,8 +866,8 @@ function closeSB() { pauseQ(); G = null; closeOverlay() }
 /* ================= Header and startup ================= */
 $('#btn-msg').onclick = () => { S.thread = null; go('messages') };
 $('#btn-bell').onclick = () => openNotifs();
-$('#citysel').onchange = async e => { try { await updateDoc(doc(db, 'users', S.uid), { city: e.target.value }); toast('Showing ' + e.target.value + '.') } catch (x) { console.error(x); toast('Couldn’t change city.') } };
+$('#citybtn').onclick = () => openCityPicker();
 let wide = window.innerWidth >= 960; window.addEventListener('resize', () => { if (wide !== (window.innerWidth >= 960)) { wide = !wide; render() } });
 
 // Inline onclick handlers in the templates call these.
-Object.assign(window, { go, render, S, routeTo, pickScorer, cancelPick, openCreate, openGame, joinGame, leaveGame, cancelGame, postGame, respond, newPost, doWorkout, like, deletePost, share, openComments, delComment, follow, openReels, closeOverlay, editMe, doSignOut, openProfile, openThread, startGame, clockToggle, addPts, undoPts, nextPer, finish, closeSB, reopenSB, submitFromSB, closeSheet, interest, createTeam, openTeam, requestJoin, cancelRequest, approve, decline, removeMember, leaveTeam, renameTeam, shareTeam, openNotifs, clearNotifs, enablePush, moreMenu, reportSheet, blockSheet, unblock, manageBlocked });
+Object.assign(window, { go, render, S, routeTo, setCity, pickScorer, cancelPick, openCreate, openGame, joinGame, leaveGame, cancelGame, postGame, respond, newPost, doWorkout, like, deletePost, share, openComments, delComment, follow, openReels, closeOverlay, editMe, doSignOut, openProfile, openThread, startGame, clockToggle, addPts, undoPts, nextPer, finish, closeSB, reopenSB, submitFromSB, closeSheet, interest, createTeam, openTeam, requestJoin, cancelRequest, approve, decline, removeMember, leaveTeam, renameTeam, shareTeam, openNotifs, clearNotifs, enablePush, moreMenu, reportSheet, blockSheet, unblock, manageBlocked });

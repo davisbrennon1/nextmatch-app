@@ -233,7 +233,9 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
 - **Ban someone:** Authentication → Users → ⋮ → **Disable account**.
 - **Fix player points:** players can't change their own points. To correct a mistake,
   edit `rp`, `wins`, `losses` in Firestore → `users` (or `teams`).
-- **Add a city:** edit `CITIES` in `public/config.js` and deploy.
+- **Cities:** players pick from all 1,023 Texas cities and towns, with search and a "Near me"
+  button. The list is in `public/cities.js` (from GeoNames, geonames.org, CC BY 4.0). To offer
+  only some cities, set `CITIES` in `public/config.js` to a list like `["Austin", "Dallas"]`.
 - **Delete someone's account at their request:** Authentication → Users → ⋮ →
   Delete account, then delete their document in Firestore → `users`.
 

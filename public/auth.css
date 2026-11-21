@@ -112,3 +112,21 @@
 .sb-pick div{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 @media (max-width:560px){.rf-sides{grid-template-columns:1fr}}
 @media (max-width:560px){.earned{grid-template-columns:1fr}}
+/* City finder */
+.topbar .city{cursor:pointer;background:none}
+.topbar .city #cityname{font-weight:700;color:var(--ink);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.city-search{display:flex;gap:8px;margin:14px 0 6px}
+.city-search input{flex:1;min-width:0}
+.city-group{margin:14px 4px 6px}
+.city-list{display:grid;max-height:min(52vh,460px);overflow:auto;margin:0 -4px}
+.city-opt{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;padding:12px;border-radius:10px;text-align:left;font-weight:600;font-size:15px}
+.city-opt:hover,.city-opt:focus-visible{background:var(--surface-2)}
+.city-opt small{color:var(--muted);font-weight:500;font-size:12px;white-space:nowrap}
+.cityfield{position:relative;display:flex;gap:8px}
+.cityfield input{flex:1;min-width:0}
+.cityfield .near{flex-shrink:0;border-radius:10px;padding:0 12px;font-size:13px;font-weight:700;border:1.5px solid currentColor;opacity:.85}
+.city-sug{position:absolute;z-index:5;top:calc(100% + 4px);left:0;right:0;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 40px #0006;padding:4px;max-height:300px;overflow:auto}
+.city-sug p{padding:10px 12px;font-size:14px}
+@media (max-width:959px){.topbar .city #cityname{max-width:96px}}
+@media (max-width:959px){.topbar .city{font-size:13px;gap:4px;padding:6px 10px}}
+@media (max-width:400px){.topbar .wordmark{font-size:0;gap:0}}

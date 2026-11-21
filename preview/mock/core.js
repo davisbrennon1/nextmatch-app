@@ -174,7 +174,7 @@ function award(path) {
   put(path, { ...g, status: 'final', awarded: true, final: { home: g.report.home, away: g.report.away, winner, pts: winner ? WIN_POINTS : 0, earned, players: Object.fromEntries(Object.entries(players).map(([u, p]) => [u, { scored: p.scored, earned: p.earned }])) }, finalAt: Timestamp.now() });
   return { winner, earned, players };
 }
-const BOTS = new Set(['marcus', 'devin', 'chris', 'tyler', 'andre', 'riley', 'sam']);
+const BOTS = new Set(['marcus', 'devin', 'chris', 'tyler', 'andre', 'riley', 'sam', 'kendra', 'jaylen', 'omar', 'lucia']);
 const human = () => auth.currentUser?.uid;
 const later = (ms, fn) => setTimeout(fn, ms);
 function trigger(path, before, after) {
@@ -228,10 +228,12 @@ function seed() {
   const users = {
     you: ['Jordan Davis', ['Basketball'], 1240, 12, 4], marcus: ['Marcus Williams', ['Basketball'], 2480, 24, 6], devin: ['Devin Carter', ['Basketball'], 1985, 18, 7],
     chris: ['Chris Evans', ['Flag football', 'Basketball'], 1180, 10, 6], tyler: ['Tyler Brooks', ['Basketball'], 960, 8, 6], andre: ['Andre Johnson', ['Flag football'], 1410, 11, 7],
-    riley: ['Riley Ortiz', ['Flag football'], 1560, 13, 4], sam: ['Sam Patel', ['Basketball'], 640, 5, 5]
+    riley: ['Riley Ortiz', ['Flag football'], 1560, 13, 4], sam: ['Sam Patel', ['Basketball'], 640, 5, 5],
+    kendra: ['Kendra Reed', ['Basketball'], 1720, 15, 5, 'Dallas'], jaylen: ['Jaylen Brooks', ['Basketball'], 1330, 11, 6, 'Dallas'],
+    omar: ['Omar Haddad', ['Flag football'], 1490, 12, 5, 'Houston'], lucia: ['Lucia Flores', ['Basketball', 'Flag football'], 880, 7, 6, 'Houston']
   };
-  for (const [id, [name, sports, rp, wins, losses]] of Object.entries(users)) {
-    put('users/' + id, { name, city: 'Austin', sports, rp, wins, losses, scored: Math.round(rp * 0.31), adult: true, createdAt: ts(now - 40 * D) });
+  for (const [id, [name, sports, rp, wins, losses, city = 'Austin']] of Object.entries(users)) {
+    put('users/' + id, { name, city, sports, rp, wins, losses, scored: Math.round(rp * 0.31), adult: true, createdAt: ts(now - 40 * D) });
     accounts.set((id === 'you' ? 'jordan' : id) + '@example.com', { uid: id, password: '' });
   }
   const team = (id, name, sport, captainUid, members, rp, wins, losses) => put('teams/' + id, { name, sport, city: 'Austin', captainUid, members, rp, wins, losses, createdAt: ts(now - 30 * D) });
@@ -247,6 +249,8 @@ function seed() {
   game('teamgame', { hostUid: 'you', hostName: 'Jordan Davis', format: '3v3', need: 'Team challenge', venue: 'Pan Am Recreation Center', when: at(2, 18), home: ['you', 'tyler'], away: ['marcus'], homeTeamId: 'eastside', homeTeamName: 'Eastside Buckets', awayTeamId: 'northloop', awayTeamName: 'North Loop Ballers' });
   game('outlaws', { sport: 'Flag football', hostUid: 'riley', hostName: 'Riley Ortiz', format: '5v5', need: 'Need players', venue: 'Zilker Metropolitan Park', when: at(1, 10), home: ['riley', 'andre'] });
   game('devin2v2', { hostUid: 'devin', hostName: 'Devin Carter', format: '2v2', need: 'Open challenge', venue: 'Givens District Park', when: at(3, 18), home: ['devin'] });
+  game('dallas1', { city: 'Dallas', hostUid: 'kendra', hostName: 'Kendra Reed', format: '2v2', need: 'Need players', venue: 'Fair Park Courts', when: at(1, 18), home: ['kendra', 'jaylen'] });
+  game('houston1', { city: 'Houston', sport: 'Flag football', hostUid: 'omar', hostName: 'Omar Haddad', format: '5v5', need: 'Open challenge', venue: 'Memorial Park', when: at(2, 10), home: ['omar', 'lucia'] });
   game('lastnight', { hostUid: 'you', hostName: 'Jordan Davis', format: '1v1', need: 'Open challenge', venue: 'Mueller Lake Park', when: ts(now - 2 * H), home: ['you'], away: ['chris'] });
   game('twovtwo', { hostUid: 'you', hostName: 'Jordan Davis', format: '2v2', need: 'Team challenge', venue: 'Pan Am Recreation Center', when: ts(now - 3 * H), home: ['you', 'tyler'], away: ['marcus', 'devin'], homeTeamId: 'eastside', homeTeamName: 'Eastside Buckets', awayTeamId: 'northloop', awayTeamName: 'North Loop Ballers' });
   game('needsconfirm', { hostUid: 'devin', hostName: 'Devin Carter', format: '1v1', need: 'Open challenge', venue: 'Givens District Park', when: ts(now - D), home: ['devin'], away: ['you'], status: 'reported', report: { by: 'devin', side: 'home', home: 21, away: 18, players: { devin: 21, you: 18 }, at: ts(now - 20 * H) } });
