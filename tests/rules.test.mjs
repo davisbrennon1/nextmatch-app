@@ -101,7 +101,9 @@ await t('cannot report for the other side', assertFails(updateDoc(doc(A, 'games/
 await t('cannot report as someone else', assertFails(updateDoc(doc(A, 'games/g3'), report('carol', 'home', 21, 15))));
 await t('cannot report straight to final', assertFails(updateDoc(doc(A, 'games/g3'), { status: 'final', report: { by: 'alice', side: 'home', home: 21, away: 15, at: serverTimestamp() } })));
 await t('negative score refused', assertFails(updateDoc(doc(A, 'games/g3'), report('alice', 'home', -1, 15))));
-await t('alice reports 21–15', assertSucceeds(updateDoc(doc(A, 'games/g3'), report('alice', 'home', 21, 15))));
+await t('report listing an outsider’s points refused', assertFails(updateDoc(doc(A, 'games/g3'), { status: 'reported', report: { by: 'alice', side: 'home', home: 21, away: 15, players: { alice: 14, carol: 7, dave: 15 }, at: serverTimestamp() } })));
+await t('alice reports 21–15 with each player’s points', assertSucceeds(updateDoc(doc(A, 'games/g3'), { status: 'reported', report: { by: 'alice', side: 'home', home: 21, away: 15, players: { alice: 14, carol: 7, bob: 15 }, at: serverTimestamp() } })));
+await t('players cannot edit their own points total', assertFails(updateDoc(doc(A, 'users/alice'), { scored: 500 })));
 await t('teammate carol cannot confirm', assertFails(updateDoc(doc(C, 'games/g3'), { status: 'confirmed', responseBy: 'carol' })));
 await t('alice cannot confirm her own report', assertFails(updateDoc(doc(A, 'games/g3'), { status: 'confirmed', responseBy: 'alice' })));
 await t('bob cannot change the score while confirming', assertFails(updateDoc(doc(B, 'games/g3'), { status: 'confirmed', responseBy: 'bob', 'report.home': 0 })));

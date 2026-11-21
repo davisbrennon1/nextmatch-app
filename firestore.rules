@@ -146,7 +146,11 @@ service cloud.firestore {
           && data().status == 'reported'
           && resource.data.when <= request.time
           && resource.data.home.size() > 0 && resource.data.away.size() > 0
-          && data().report.keys().hasOnly(['by', 'side', 'home', 'away', 'at'])
+          && data().report.keys().hasOnly(['by', 'side', 'home', 'away', 'at', 'players'])
+          // Optional points per player: only people in this game, at most 14 entries.
+          && (!('players' in data().report) || (data().report.players is map
+              && data().report.players.size() <= 14
+              && data().report.players.keys().toSet().difference(resource.data.home.toSet().union(resource.data.away.toSet())).size() == 0))
           && data().report.by == me()
           && data().report.side in ['home', 'away'] && inGame(data().report.side)
           && data().report.home is int && data().report.home >= 0 && data().report.home <= 999

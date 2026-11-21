@@ -201,16 +201,18 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
    (or straight from the scoreboard).
 2. Someone on the **other** side confirms it or disputes it. Teammates can't confirm
    their own side's report.
-3. Once confirmed, the server gives every player:
-   - **100 player points for a win**, plus
-   - **1 bonus player point for every point their side scored**, win or lose.
+3. Whoever reports enters **each player's points**. The team totals add up automatically.
+   The live scoreboard does this too: in team games, every +1/+2/+3 asks who scored.
+4. Once confirmed, the server gives each player:
+   - **100 player points if their side won**, plus
+   - **1 bonus player point for every point they scored themselves**, win or lose.
 
-   Example: a 21–17 win gives each winner 121 points (100 + 21) and each player on the other
-   side 17. A tie gives no win bonus, just the scored points. Wins and losses go on records,
-   and team games add the same points to both teams' totals. In team games everyone on a
-   side gets that side's score as their bonus, because the app records team scores, not
-   who scored each point.
-4. A disputed score awards nothing. Players talk it out and report again.
+   Example: Eastside beats North Loop 21–18. Jordan scored 14 and gets 114 (100 + 14);
+   Tyler scored 7 and gets 107; Marcus scored 10 and gets 10. A tie gives no win bonus.
+   Each player's career "Pts scored" goes up by their own points. Teams get 100 for a win plus
+   their team total. If a report's player points don't add up to the team score, everyone on
+   that side gets the team score instead and career totals aren't changed.
+5. A disputed score awards nothing. Players talk it out and report again.
 
 ## Safety: reports and blocks
 
@@ -286,10 +288,10 @@ If a security test fails, nothing is published.
 
 ## Automated checks (for developers)
 
-- **113 security-rule checks**: for example, nobody can give themselves points, confirm
+- **115 security-rule checks**: for example, nobody can give themselves points, confirm
   their own side's score, join a team without the captain's approval, read another
   team's chat or other people's messages, or message someone who blocked them.
-- **22 server-code checks**: points awarded once and only to winners, ties and disputes,
+- **25 server-code checks**: points awarded once and only to winners, ties and disputes,
   team records, notifications, reminders, and auto-hiding reported posts.
 
 With Java installed:

@@ -38,24 +38,25 @@ check('host notified for each player who joins', joinN?.length === 2, JSON.strin
 
 console.log('— Report → confirm → points');
 await admin(db => updateDoc(doc(db, 'games/g1'), { when: Timestamp.fromDate(new Date(Date.now() - 36e5)) }));
-await updateDoc(doc(as('bob'), 'games/g1'), { status: 'reported', report: { by: 'bob', side: 'away', home: 21, away: 17, at: serverTimestamp() } });
+await updateDoc(doc(as('bob'), 'games/g1'), { status: 'reported', report: { by: 'bob', side: 'away', home: 21, away: 17, players: { alice: 14, carol: 7, bob: 17 }, at: serverTimestamp() } });
 const confN = await waitFor(async () => (await notifs('carol')).find(n => n.type === 'confirm'));
 check('other side asked to confirm', !!confN && /21/.test(confN.body), JSON.stringify(confN));
 check('reporter’s own side is not asked', !(await notifs('bob')).some(n => n.type === 'confirm'));
 await updateDoc(doc(as('carol'), 'games/g1'), { status: 'confirmed', responseBy: 'carol' });
 const fin = await waitFor(async () => { const g = await read('games/g1'); return g.status === 'final' && g });
-check('game finalized with points earned per side', fin?.final?.winner === 'home' && fin.final.home === 21 && fin.final.pts === 100 && fin.final.earned?.home === 121 && fin.final.earned?.away === 17, JSON.stringify(fin?.final));
+check('game finalized with each player’s points', fin?.final?.winner === 'home' && fin.final.home === 21 && fin.final.players?.alice?.earned === 114 && fin.final.players?.carol?.scored === 7 && fin.final.earned?.home === 121, JSON.stringify(fin?.final));
 const [a, c, b] = [await read('users/alice'), await read('users/carol'), await read('users/bob')];
-check('winners get 100 for the win + 21 scored, and a win', a.rp === 121 && a.wins === 1 && c.rp === 121 && c.wins === 1, JSON.stringify({ a, c }));
-check('loser gets 1 point per point scored (17) and a loss', b.rp === 17 && b.losses === 1 && b.wins === 0, JSON.stringify(b));
+check('each winner gets 100 + their own points (114 and 107)', a.rp === 114 && a.wins === 1 && c.rp === 107 && c.wins === 1, JSON.stringify({ a, c }));
+check('points scored are added to each player’s career total', a.scored === 14 && c.scored === 7, JSON.stringify({ a: a.scored, c: c.scored }));
+check('loser gets their own points (17) and a loss', b.rp === 17 && b.scored === 17 && b.losses === 1 && b.wins === 0, JSON.stringify(b));
 const [t1, t2] = [await read('teams/t1'), await read('teams/t2')];
 check('winning team gets 121 and a win', t1.rp === 121 && t1.wins === 1, JSON.stringify(t1));
 check('losing team gets 17 and a loss', t2.losses === 1 && t2.rp === 17, JSON.stringify(t2));
-const finalN = await waitFor(async () => (await notifs('bob')).find(n => n.type === 'final'));
-check('everyone told the final', !!finalN && /Eastside wins/.test(finalN.body), JSON.stringify(finalN));
+const finalN = await waitFor(async () => (await notifs('carol')).find(n => n.type === 'final'));
+check('each player told what they earned', !!finalN && /You earned 107 player points \(100 for the win \+ 7 you scored\)/.test(finalN.body), JSON.stringify(finalN));
 await sleep(1500);
 const again = await read('users/alice');
-check('points awarded exactly once', again.rp === 121 && again.wins === 1, JSON.stringify(again));
+check('points awarded exactly once', again.rp === 114 && again.wins === 1, JSON.stringify(again));
 
 console.log('— Tie and dispute');
 const past = Timestamp.fromDate(new Date(Date.now() - 36e5));
@@ -72,6 +73,15 @@ check('tie finalizes with no winner', tie?.final?.winner === null && tie.final.p
 const [dv, er] = [await read('users/dave'), await read('users/erin')];
 check('tie changes nobody’s record', dv.wins === 0 && dv.losses === 0 && er.wins === 0 && er.losses === 0);
 check('tie gives each player their scored points (20)', dv.rp === 20 && er.rp === 20, JSON.stringify({ dv: dv.rp, er: er.rp }));
+
+console.log('— Per-player points that don’t add up');
+const daveScoredBefore = (await read('users/dave')).scored || 0;
+await admin(db => setDoc(doc(db, 'games/g4'), { hostUid: 'dave', hostName: 'Dave', sport: 'Basketball', format: '2v2', need: 'Open', venue: 'Givens', city: 'Austin', when: past, home: ['dave', 'erin'], away: ['bob'], players: ['dave', 'erin', 'bob'], status: 'open' }));
+await updateDoc(doc(as('dave'), 'games/g4'), { status: 'reported', report: { by: 'dave', side: 'home', home: 21, away: 10, players: { dave: 30, erin: 30, bob: 10 }, at: serverTimestamp() } });
+await updateDoc(doc(as('bob'), 'games/g4'), { status: 'confirmed', responseBy: 'bob' });
+const g4 = await waitFor(async () => { const g = await read('games/g4'); return g.status === 'final' && g });
+check('a side whose points don’t add up falls back to the side score', g4?.final?.players?.dave?.scored === 21 && g4.final.players.erin.earned === 121 && g4.final.players.bob.scored === 10, JSON.stringify(g4?.final?.players));
+check('fallback points are not added to career totals', ((await read('users/dave')).scored || 0) === daveScoredBefore, JSON.stringify(await read('users/dave')));
 
 console.log('— Reported posts');
 await setDoc(doc(as('erin'), 'posts/p1'), { uid: 'erin', name: 'Erin', city: 'Austin', kind: 'Highlight', caption: 'spam spam', sport: 'Basketball', art: 'ball', mediaUrl: null, mediaType: null, likedBy: [], createdAt: serverTimestamp() });

@@ -10,6 +10,21 @@ const TZ = 'America/Chicago';
 // Player points: 100 for a win, plus 1 bonus point for every point your side scored.
 const WIN_POINTS = 100;
 const earnedFor = (score, won) => (won ? WIN_POINTS : 0) + Math.max(0, score | 0);
+
+// Works out each player's points from a confirmed score. If the report lists every player's
+// points and they add up to their side's score, each player gets their own points. Otherwise
+// (older reports) everyone on a side gets the side's score.
+function splitResult(g) {
+  const score = { home: g.report.home, away: g.report.away };
+  const winner = score.home > score.away ? 'home' : score.away > score.home ? 'away' : null;
+  const given = g.report.players || {}, players = {};
+  for (const side of ['home', 'away']) {
+    const ids = g[side] || [], vals = ids.map(u => Number.isInteger(given[u]) && given[u] >= 0 ? given[u] : 0);
+    const exact = ids.length > 0 && ids.every(u => u in given) && vals.reduce((a, b) => a + b, 0) === score[side];
+    ids.forEach((u, i) => { const scored = exact ? vals[i] : score[side]; players[u] = { side, scored, earned: earnedFor(scored, winner === side), counted: exact || ids.length === 1 } });
+  }
+  return { score, winner, players, earned: { home: earnedFor(score.home, winner === 'home'), away: earnedFor(score.away, winner === 'away') } };
+}
 const BAD_TOKEN = ['messaging/registration-token-not-registered', 'messaging/invalid-registration-token', 'messaging/invalid-argument'];
 
 async function nameOf(uid) {
@@ -57,22 +72,20 @@ async function awardResult(ref) {
   return db().runTransaction(async tx => {
     const snap = await tx.get(ref), g = snap.data();
     if (!g || g.status !== 'confirmed' || g.awarded) return null;
-    const hs = g.report.home, as = g.report.away;
-    const winner = hs > as ? 'home' : as > hs ? 'away' : null;
-    const earned = { home: earnedFor(hs, winner === 'home'), away: earnedFor(as, winner === 'away') };
+    const hs = g.report.home, as = g.report.away, { winner, players, earned } = splitResult(g);
     const userRefs = [...g.home, ...g.away].map(u => db().doc(`users/${u}`));
     const teamRefs = ['home', 'away'].map(s => g[s + 'TeamId'] ? db().doc(`teams/${g[s + 'TeamId']}`) : null);
     const users = await Promise.all(userRefs.map(r => tx.get(r)));
     const teams = await Promise.all(teamRefs.map(r => r ? tx.get(r) : null));
-    const change = side => ({ rp: FieldValue.increment(earned[side]), ...(winner ? { [winner === side ? 'wins' : 'losses']: FieldValue.increment(1) } : {}) });
+    const record = side => winner ? { [winner === side ? 'wins' : 'losses']: FieldValue.increment(1) } : {};
     users.forEach(u => {
-      if (!u.exists) return;
-      const side = g.home.includes(u.id) ? 'home' : g.away.includes(u.id) ? 'away' : null;
-      if (side) tx.update(u.ref, change(side));
+      const p = players[u.id]; if (!u.exists || !p) return;
+      tx.update(u.ref, { rp: FieldValue.increment(p.earned), ...(p.counted ? { scored: FieldValue.increment(p.scored) } : {}), ...record(p.side) });
     });
-    teams.forEach((t, i) => { if (t?.exists) tx.update(t.ref, change(i === 0 ? 'home' : 'away')) });
-    tx.update(ref, { status: 'final', awarded: true, final: { home: hs, away: as, winner, pts: winner ? WIN_POINTS : 0, earned }, finalAt: FieldValue.serverTimestamp() });
-    return { winner, earned };
+    teams.forEach((t, i) => { const side = i === 0 ? 'home' : 'away'; if (t?.exists) tx.update(t.ref, { rp: FieldValue.increment(earned[side]), ...record(side) }) });
+    const final = { home: hs, away: as, winner, pts: winner ? WIN_POINTS : 0, earned, players: Object.fromEntries(Object.entries(players).map(([u, p]) => [u, { scored: p.scored, earned: p.earned }])) };
+    tx.update(ref, { status: 'final', awarded: true, final, finalAt: FieldValue.serverTimestamp() });
+    return { winner, earned, players };
   });
 }
 
@@ -93,7 +106,10 @@ async function onGameUpdated(before, after, ref) {
     const res = await awardResult(ref);
     if (res) {
       const score = `${g.report.home}–${g.report.away}`;
-      await notify(g.players, { type: 'final', title: `Final: ${score}`, body: res.winner ? `${sideName(g, res.winner)} wins. They get ${res.earned[res.winner]} player points (100 for the win + ${res.earned[res.winner] - 100} for points scored). ${sideName(g, res.winner === 'home' ? 'away' : 'home')} gets ${res.earned[res.winner === 'home' ? 'away' : 'home']}.` : `A draw. Everyone gets 1 player point for each point their side scored (${res.earned.home} each).`, link });
+      for (const [u, p] of Object.entries(res.players)) {
+        const head = res.winner ? `${sideName(g, res.winner)} won ${score}.` : `A ${score} draw.`;
+        await notify([u], { type: 'final', title: `Final: ${score}`, body: `${head} You earned ${p.earned} player points (${res.winner === p.side ? `${WIN_POINTS} for the win + ` : ''}${p.scored} you scored).`, link });
+      }
     }
   }
 }
@@ -138,4 +154,4 @@ async function sendReminders(now = new Date()) {
   return sent;
 }
 
-module.exports = { WIN_POINTS, earnedFor, awardResult, onGameUpdated, onDirectMessage, onTeamMessage, onTeamRequest, onReport, sendReminders, notify };
+module.exports = { WIN_POINTS, earnedFor, splitResult, awardResult, onGameUpdated, onDirectMessage, onTeamMessage, onTeamRequest, onReport, sendReminders, notify };

@@ -87,7 +87,28 @@
   .rk-tip{left:8px;white-space:normal;max-width:calc(100% - 16px)}
 }
 .earned{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-.earned div{background:var(--surface-2);border-radius:10px;padding:10px 12px;display:grid;gap:2px;min-width:0}
-.earned span{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.earned>div{background:var(--surface-2);border-radius:10px;padding:10px 12px;display:grid;gap:2px;min-width:0}
+.earned>div>span{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .earned b{font:800 24px var(--display);color:var(--gold);font-variant-numeric:tabular-nums}
 .earned small{font-size:11px;color:var(--muted)}
+/* Per-player score reporting and results */
+.rf-sides{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.rf-side{border:0;margin:0;padding:10px 12px;background:var(--surface-2);border-radius:10px;min-width:0;display:grid;gap:8px}
+.rf-side legend{display:flex;justify-content:space-between;width:100%;padding:0;margin-bottom:4px;font-size:12px;font-weight:700;float:left}
+.rf-side legend span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:8px}
+.rf-side legend b{font:800 22px var(--display);font-variant-numeric:tabular-nums}
+.rf-p{display:grid;grid-template-columns:minmax(0,1fr) 72px;gap:8px;align-items:center;font-size:13px}
+.rf-p span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rf-p input{padding:8px;text-align:center;font:800 18px var(--display);background:var(--surface)}
+.earned-side{display:grid;gap:6px;align-content:start}
+.earned-row{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--surface);border-radius:8px;padding:6px 8px}
+.earned-row.me{outline:1.5px solid var(--brand)}
+.earned .earned-row span{font-size:13px;font-weight:700;min-width:0;white-space:normal}
+.earned-row small{display:block;font-weight:500}
+.earned .earned-row b{font-size:20px}
+.sb-who{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px;font-size:12px;color:var(--sb-muted)}
+.sb-who b{color:var(--sb-text)}
+.sb-pick{margin-top:14px;padding:14px;border-radius:14px;background:var(--sb-panel);border:1.5px solid var(--sb-led);text-align:center;display:grid;gap:10px}
+.sb-pick div{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+@media (max-width:560px){.rf-sides{grid-template-columns:1fr}}
+@media (max-width:560px){.earned{grid-template-columns:1fr}}
