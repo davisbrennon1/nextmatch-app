@@ -112,5 +112,35 @@ check('both players reminded', (await notifs('bob')).some(n => n.type === 'remin
 check('no reminder for tomorrow’s game', !(await notifs('carol')).some(n => n.type === 'reminder'));
 check('reminders are not sent twice', (await lib.sendReminders()) === 0);
 
+console.log('— Courts, fields and parks');
+const V = require('../functions/venues.js');
+const sample = [
+  { type: 'way', id: 1, center: { lat: 30.285, lon: -97.755 }, tags: { leisure: 'park', name: 'Pease Park' } },
+  { type: 'way', id: 2, center: { lat: 30.2853, lon: -97.7552 }, tags: { leisure: 'pitch', sport: 'basketball' } },
+  { type: 'way', id: 3, center: { lat: 30.2855, lon: -97.7549 }, tags: { leisure: 'pitch', sport: 'basketball' } },
+  { type: 'way', id: 4, center: { lat: 30.40, lon: -97.90 }, tags: { leisure: 'pitch', sport: 'american_football' } },
+  { type: 'way', id: 5, center: { lat: 30.266, lon: -97.77 }, tags: { leisure: 'pitch', sport: 'soccer', name: 'Zilker Field 3' } },
+  { type: 'node', id: 6, lat: 30.25, lon: -97.71, tags: { leisure: 'sports_centre', name: 'Pan American Recreation Center', 'addr:housenumber': '2100', 'addr:street': 'E 3rd St' } },
+  { type: 'way', id: 7, center: { lat: 30.3, lon: -97.7 }, tags: { leisure: 'pitch', sport: 'basketball', name: 'Private Court', access: 'private' } },
+  { type: 'way', id: 8, center: { lat: 30.29, lon: -97.72 }, tags: { leisure: 'pitch', sport: 'basketball;tennis', name: 'Rosewood Park Basketball Court', lit: 'yes' } }
+];
+const list = V.normalize(sample), names = list.map(v => v.name);
+check('unnamed courts in a park get the park’s name', names.includes('Pease Park courts') && list.find(v => v.name === 'Pease Park courts').count === 2, JSON.stringify(names));
+check('unnamed courts far from any park are left out', !list.some(v => v.lat === 30.4));
+check('private courts are left out', !names.includes('Private Court'));
+check('fields are for flag football, courts for basketball', list.find(v => v.name === 'Zilker Field 3').sports.join() === 'Flag football' && list.find(v => v.name === 'Rosewood Park Basketball Court').sports.join() === 'Basketball');
+check('rec centers keep their address', list.find(v => v.kind === 'Rec center')?.address === '2100 E 3rd St');
+check('courts and fields are listed before parks', list.findIndex(v => v.kind === 'Park') > list.findIndex(v => v.kind === 'Field'));
+check('city lookup works', !!V.cityInfo('Austin, TX') && !V.cityInfo('Atlantis, TX'));
+let calls = 0;
+const fake = async q => { calls++; if (!/leisure/.test(q)) throw new Error('bad query'); return sample };
+const first = await V.getVenues('Austin, TX', { fetchElements: fake });
+const second = await V.getVenues('Austin, TX', { fetchElements: fake });
+check('looks a city up once, then uses the saved list', calls === 1 && first.source === 'openstreetmap' && second.source === 'saved' && second.venues.length === first.venues.length, JSON.stringify({ calls, a: first.source, b: second.source }));
+const later = await V.getVenues('Austin, TX', { fetchElements: async () => { throw new Error('map down') }, now: Date.now() + 40 * 864e5 });
+check('if the map is down, the old saved list is used', later.source === 'saved' && later.venues.length === first.venues.length);
+let unknown = null; try { await V.getVenues('Atlantis, TX', { fetchElements: fake }) } catch (e) { unknown = e.code }
+check('unknown cities are refused', unknown === 'invalid-argument');
+
 console.log(`\n${pass} passed, ${failN} failed`);
 await env.cleanup(); process.exit(failN ? 1 : 0);

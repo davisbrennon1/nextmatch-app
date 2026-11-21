@@ -8,6 +8,7 @@ import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, collection, query, where,
   orderBy, limit, onSnapshot, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch, connectFirestoreEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFunctions, httpsCallable, connectFunctionsEmulator } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js';
 
 /* ================= Basics ================= */
 const $ = s => document.querySelector(s);
@@ -25,7 +26,8 @@ if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith('PASTE')) {
 const fb = initializeApp(firebaseConfig);
 const auth = getAuth(fb);
 const db = getFirestore(fb);
-if (USE_EMULATORS) { connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true }); connectFirestoreEmulator(db, '127.0.0.1', 8080) }
+const fns = getFunctions(fb, 'us-central1');
+if (USE_EMULATORS) { connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true }); connectFirestoreEmulator(db, '127.0.0.1', 8080); connectFunctionsEmulator(fns, '127.0.0.1', 5001) }
 
 /* ================= Icons and artwork ================= */
 const I = {
@@ -450,7 +452,7 @@ function drawGameSheet() {
     const ready = g.home.length && g.away.length;
     result = `<div class="result-box ${g.status === 'disputed' ? 'bad' : ''}">${g.status === 'disputed' ? `<div class="label">Score disputed</div><p style="margin-bottom:10px">The last report (${g.report.home}–${g.report.away}) was disputed. Agree on the score, then report it again.</p>` : '<div class="label">Report the final score</div>'}${ready ? `<form id="rf" class="rf"><div class="rf-sides">${['home', 'away'].map(s => `<fieldset class="rf-side"><legend><span>${esc(sideName(g, s))}</span><b id="rt-${s}">0</b></legend>${g[s].map(u => `<label class="rf-p" for="rp-${u}"><span>${esc(nameOf(u))}${u === S.uid ? ' (you)' : ''}</span><input id="rp-${u}" data-side="${s}" data-uid="${u}" type="number" inputmode="numeric" min="0" max="999" placeholder="0" aria-label="Points scored by ${esc(nameOf(u))}"></label>`).join('')}</fieldset>`).join('')}</div><button class="btn btn-primary btn-sm" style="margin-top:12px">Submit final score</button></form><p class="muted" style="font-size:12px;margin-top:8px">Enter the points each player scored. Team totals add up for you. The other side confirms before anyone gets points.</p>` : '<p class="muted">Both sides need at least one player before a score can be reported.</p>'}</div>`;
   }
-  $('#sheetbody').innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><span class="sportbar ${sportCls(g.sport)}"><span class="dot"></span>${esc(g.sport)} · ${esc(g.format)}</span><button class="more" aria-label="More options" onclick="moreMenu('game','${g.id}','${g.hostUid}')">⋯</button></div><h2 style="margin-top:8px">${esc(gameTitle(g))}</h2><div style="display:grid;gap:4px;font-size:14px;margin-top:10px"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(g.venue)}, ${esc(g.city)} · <a class="link" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(g.venue + ' ' + g.city)}" target="_blank" rel="noopener">Directions ↗</a></span><span style="color:var(--gold);font-weight:700">Win: +${WIN_POINTS} player points, plus 1 for every point you score</span></div>${result}<div class="sides-grid">${col('home')}${col('away')}</div><p class="muted" style="font-size:13px;margin-top:12px">${g.sport === 'Flag football' ? 'Flag pulls end the play. No tackling. Captains confirm field size and scoring before kickoff.' : 'Games to 21, win by 2 unless captains agree otherwise.'}</p><div class="actions">${host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="cancelGame('${g.id}')">Cancel game</button>` : ''}${sd && !host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="leaveGame('${g.id}')">Leave game</button>` : ''}${sd && !['final', 'confirmed'].includes(g.status) ? `<button class="btn btn-primary" onclick="startGame('${g.id}')">Open scoreboard</button>` : `<button class="btn btn-ghost" onclick="closeSheet()">Close</button>`}</div>`;
+  $('#sheetbody').innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><span class="sportbar ${sportCls(g.sport)}"><span class="dot"></span>${esc(g.sport)} · ${esc(g.format)}</span><button class="more" aria-label="More options" onclick="moreMenu('game','${g.id}','${g.hostUid}')">⋯</button></div><h2 style="margin-top:8px">${esc(gameTitle(g))}</h2><div style="display:grid;gap:4px;font-size:14px;margin-top:10px"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(g.venue)}, ${esc(g.city)} · <a class="link" href="${mapsLink(g)}" target="_blank" rel="noopener">Directions ↗</a></span><span style="color:var(--gold);font-weight:700">Win: +${WIN_POINTS} player points, plus 1 for every point you score</span></div>${result}<div class="sides-grid">${col('home')}${col('away')}</div><p class="muted" style="font-size:13px;margin-top:12px">${g.sport === 'Flag football' ? 'Flag pulls end the play. No tackling. Captains confirm field size and scoring before kickoff.' : 'Games to 21, win by 2 unless captains agree otherwise.'}</p><div class="actions">${host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="cancelGame('${g.id}')">Cancel game</button>` : ''}${sd && !host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="leaveGame('${g.id}')">Leave game</button>` : ''}${sd && !['final', 'confirmed'].includes(g.status) ? `<button class="btn btn-primary" onclick="startGame('${g.id}')">Open scoreboard</button>` : `<button class="btn btn-ghost" onclick="closeSheet()">Close</button>`}</div>`;
   const f = $('#rf');
   if (f) {
     if (keep) keep.forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v });
@@ -490,17 +492,58 @@ async function respond(id, status) {
   try { await updateDoc(doc(db, 'games', id), { status, responseBy: S.uid }); toast(status === 'confirmed' ? 'Confirmed. Points are on the way.' : 'Disputed. Talk it out, then report again.') }
   catch (e) { console.error(e); toast('Couldn’t save your answer. Try again.') }
 }
+/* ───────── Courts, fields and parks near a city (from OpenStreetMap, via the server) ───────── */
+const mapsLink = g => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(Number.isFinite(g.venueLat) ? `${g.venueLat},${g.venueLng}` : `${g.venue} ${g.city}`);
+const VENUES = {};
+function loadVenues(city) {
+  return VENUES[city] ??= (async () => {
+    try { // the saved list is quickest; the server refreshes it when it's over a month old
+      const d = await getDoc(doc(db, 'venues', city.replace(/[^A-Za-z0-9]+/g, '_')));
+      if (d.exists() && Date.now() - toDate(d.data().updatedAt) < 30 * 864e5) return d.data().venues || [];
+    } catch { }
+    return (await httpsCallable(fns, 'venues')({ city })).data.venues || [];
+  })().catch(e => { delete VENUES[city]; throw e });
+}
+const VENUE_ICON = { 'Basketball court': '◉', Field: '▭', 'Sports court': '◎', 'Rec center': '⌂', Park: '♣' };
+function bindVenueField(id, city, sportOf) {
+  const input = document.getElementById(id), list = document.getElementById(id + '-list'), hint = document.getElementById(id + '-hint');
+  let venues = null, chosen = null;
+  const fits = v => v.sports.includes(sportOf());
+  const show = () => {
+    if (!venues || document.activeElement !== input) return;
+    const k = norm(input.value), words = k.split(' ').filter(Boolean);
+    const r = venues.filter(fits).filter(v => !words.length || words.every(w => norm(`${v.name} ${v.park} ${v.address} ${v.kind}`).includes(w))).slice(0, 8);
+    list.innerHTML = r.length ? r.map(v => `<button type="button" class="city-opt venue-opt" role="option" data-i="${venues.indexOf(v)}"><span><i aria-hidden="true">${VENUE_ICON[v.kind] || '•'}</i>${esc(v.name)}</span><small>${esc([v.kind, v.park, v.count > 1 ? v.count + (v.kind === 'Field' ? ' fields' : ' courts') : '', v.lit ? 'Lights' : ''].filter(Boolean).join(' · '))}</small></button>`).join('')
+      : `<p class="muted">${words.length ? `No match in ${esc(city)}. Keep typing to use your own place.` : `No ${esc(sportOf().toLowerCase())} spots found nearby. Type the place.`}</p>`;
+    list.hidden = false; input.setAttribute('aria-expanded', 'true');
+  };
+  const pick = v => { chosen = v; input.value = v.name; list.hidden = true; input.setAttribute('aria-expanded', 'false'); hint.textContent = `${v.kind}${v.park ? ' in ' + v.park : ''}${v.address ? ' · ' + v.address : ''}. Directions will point here.` };
+  input.addEventListener('focus', show);
+  input.addEventListener('input', () => { if (chosen && input.value !== chosen.name) chosen = null; show() });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !list.hidden) { const f = list.querySelector('.venue-opt'); if (f) { e.preventDefault(); pick(venues[+f.dataset.i]) } } if (e.key === 'Escape') list.hidden = true });
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true }, 150));
+  list.addEventListener('mousedown', e => e.preventDefault());
+  list.addEventListener('click', e => { const b = e.target.closest('.venue-opt'); if (b) pick(venues[+b.dataset.i]) });
+  loadVenues(city).then(v => {
+    venues = v;
+    if (!document.body.contains(hint)) return;
+    hint.textContent = v.length ? `${v.length} courts, fields and parks in ${city}, from OpenStreetMap. Or type any place.` : `We couldn’t find courts or fields in ${city} on the map yet. Type the place.`;
+    show();
+  }).catch(() => { if (document.body.contains(hint)) hint.textContent = 'Couldn’t load nearby places right now. Type the place instead.' });
+  return { picked: () => chosen && input.value === chosen.name ? chosen : null, refresh: () => { if (chosen && !fits(chosen)) { chosen = null } show() } };
+}
 function postGame(vs = '', vsTeam = '') {
   const def = new Date(Date.now() + 36e5 * 3); def.setMinutes(0, 0, 0);
   const local = new Date(def - def.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
-  sheet(`<h2>Post a game</h2><p class="muted">${vs ? 'Challenge ' + esc(vs) + '.' : 'Anyone in ' + esc(myCity()) + ' can join.'}</p><form id="pg"><label class="field" for="pgs"><span>Sport</span><select id="pgs">${SPORTS.map(s => `<option ${(S.teamCache[vsTeam]?.sport || (S.me.sports || [])[0]) === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label><label class="field" for="pgf"><span>Format</span><select id="pgf"></select></label><label class="field" for="pgt"><span>Play as</span><select id="pgt"></select></label><label class="field" for="pgo"><span>Opponent team (optional)</span><select id="pgo"></select></label><label class="field" for="pgn"><span>Looking for</span><select id="pgn">${(vs ? ['Challenge: ' + vs] : ['Open challenge', 'Need players', 'Team challenge', 'Casual run']).map(x => `<option>${esc(x.slice(0, 40))}</option>`).join('')}</select></label><label class="field" for="pgv"><span>Where</span><input id="pgv" required minlength="2" maxlength="100" placeholder="e.g. Pease Park Courts"></label><label class="field" for="pgd"><span>When</span><input id="pgd" type="datetime-local" required value="${local}"></label><p id="pgerr" class="auth-err" hidden></p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="pggo">Post game</button></div></form>`);
+  sheet(`<h2>Post a game</h2><p class="muted">${vs ? 'Challenge ' + esc(vs) + '.' : 'Anyone in ' + esc(myCity()) + ' can join.'}</p><form id="pg"><label class="field" for="pgs"><span>Sport</span><select id="pgs">${SPORTS.map(s => `<option ${(S.teamCache[vsTeam]?.sport || (S.me.sports || [])[0]) === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label><label class="field" for="pgf"><span>Format</span><select id="pgf"></select></label><label class="field" for="pgt"><span>Play as</span><select id="pgt"></select></label><label class="field" for="pgo"><span>Opponent team (optional)</span><select id="pgo"></select></label><label class="field" for="pgn"><span>Looking for</span><select id="pgn">${(vs ? ['Challenge: ' + vs] : ['Open challenge', 'Need players', 'Team challenge', 'Casual run']).map(x => `<option>${esc(x.slice(0, 40))}</option>`).join('')}</select></label><label class="field" for="pgv"><span>Where</span></label><div class="cityfield venuefield"><input id="pgv" required minlength="2" maxlength="100" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="pgv-list" placeholder="Search courts, fields and parks"><div class="city-sug" id="pgv-list" role="listbox" hidden></div></div><p class="muted venue-hint" id="pgv-hint">Looking up courts and fields in ${esc(myCity())}…</p><label class="field" for="pgd"><span>When</span><input id="pgd" type="datetime-local" required value="${local}"></label><p id="pgerr" class="auth-err" hidden></p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="pggo">Post game</button></div></form>`);
   const fill = () => {
     const sp = $('#pgs').value, mineT = S.myTeams.filter(t => t.sport === sp), opp = S.teams.filter(t => t.sport === sp && !myTeamIds().has(t.id) && ok(t.captainUid));
     $('#pgf').innerHTML = FORMATS[sp].map(f => `<option ${f === '3v3' ? 'selected' : ''}>${f}</option>`).join('');
     $('#pgt').innerHTML = `<option value="">Just me (pickup)</option>` + mineT.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
     $('#pgo').innerHTML = `<option value="">Anyone</option>` + opp.map(t => `<option value="${t.id}" ${t.id === vsTeam ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
   };
-  $('#pgs').onchange = fill; fill();
+  $('#pgs').onchange = () => { fill(); venueBox.refresh() }; fill();
+  const venueBox = bindVenueField('pgv', myCity(), () => $('#pgs').value);
   $('#pg').onsubmit = async e => {
     e.preventDefault(); const when = new Date($('#pgd').value), venue = $('#pgv').value.trim(), err = $('#pgerr');
     if (venue.length < 2) { err.hidden = false; err.textContent = 'Add where you’re playing.'; return }
@@ -509,6 +552,7 @@ function postGame(vs = '', vsTeam = '') {
     $('#pggo').disabled = true;
     try {
       const g = { hostUid: S.uid, hostName: myName(), sport: $('#pgs').value, format: $('#pgf').value, need: $('#pgn').value, venue, city: myCity(), when: Timestamp.fromDate(when), home: [S.uid], away: [], players: [S.uid], status: 'open', createdAt: serverTimestamp() };
+      const spot = venueBox.picked(); if (spot) Object.assign(g, { venueLat: spot.lat, venueLng: spot.lng });
       if (ht) Object.assign(g, { homeTeamId: ht, homeTeamName: S.teamCache[ht].name });
       if (at) Object.assign(g, { awayTeamId: at, awayTeamName: S.teamCache[at].name });
       await addDoc(collection(db, 'games'), g); closeSheet(); go('play', { play: 'games', sport: 'All', fmt: 'All' }); toast('Game posted.');
@@ -541,7 +585,7 @@ function today() {
   const next = S.myGames.filter(g => g.status === 'open' && toDate(g.when) > new Date(Date.now() - 2 * 36e5)).sort((a, b) => toDate(a.when) - toDate(b.when))[0];
   const todays = S.games.filter(g => ok(g.hostUid) && dayLabel(toDate(g.when)) === 'Today');
   let ticket;
-  if (next) { const w = toDate(next.when), [cd, cdl] = countdown(w); ticket = `<section class="ticket ${sportCls(next.sport)}" aria-label="Your next game"><div class="main"><div class="label">Next up · ${esc(next.format)} ${esc(next.sport)}</div><h2>${esc(gameTitle(next))}</h2><div class="meta"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(next.venue)}</span><span>${next.players.length} in</span></div><div class="row"><button class="btn btn-primary btn-sm" onclick="startGame('${next.id}')">${ic('whistle', false, 'width="16" height="16"')} Open scoreboard</button><a class="btn btn-ghost btn-sm" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(next.venue + ' ' + next.city)}" target="_blank" rel="noopener">Directions ↗</a><button class="btn btn-ghost btn-sm" onclick="openGame('${next.id}')">Details</button></div></div><div class="stub"><b style="font-family:var(--display)">${cd}</b><small>${cdl}</small></div></section>` }
+  if (next) { const w = toDate(next.when), [cd, cdl] = countdown(w); ticket = `<section class="ticket ${sportCls(next.sport)}" aria-label="Your next game"><div class="main"><div class="label">Next up · ${esc(next.format)} ${esc(next.sport)}</div><h2>${esc(gameTitle(next))}</h2><div class="meta"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(next.venue)}</span><span>${next.players.length} in</span></div><div class="row"><button class="btn btn-primary btn-sm" onclick="startGame('${next.id}')">${ic('whistle', false, 'width="16" height="16"')} Open scoreboard</button><a class="btn btn-ghost btn-sm" href="${mapsLink(next)}" target="_blank" rel="noopener">Directions ↗</a><button class="btn btn-ghost btn-sm" onclick="openGame('${next.id}')">Details</button></div></div><div class="stub"><b style="font-family:var(--display)">${cd}</b><small>${cdl}</small></div></section>` }
   else ticket = `<section class="ticket"><div class="main"><div class="label">Next up</div><h2>No game on your <em>calendar.</em></h2><div class="meta"><span>Join a game below or post your own and see who shows up.</span></div><div class="row"><button class="btn btn-primary btn-sm" onclick="postGame()">＋ Post a game</button><button class="btn btn-ghost btn-sm" onclick="go('play',{play:'games'})">Browse games</button></div></div><div class="stub"><b style="font-family:var(--display)">0</b><small>Games booked</small></div></section>`;
   const recent = visiblePosts(S.posts).slice(0, 3);
   return `<div class="cols two"><div style="min-width:0"><div class="greet"><div><div class="label">${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div><h1 style="margin-top:6px">${hi}, <span>${esc(first())}.</span></h1></div></div>${actionItems()}${ticket}

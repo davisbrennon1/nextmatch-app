@@ -227,6 +227,54 @@ function messageSent(cid, m) {
   });
 }
 
+/* ───────── Server calls (the preview can't reach OpenStreetMap, so it uses sample places) ───────── */
+const B = ['Basketball'], F = ['Flag football'], BF = ['Basketball', 'Flag football'];
+const v = (name, kind, sports, lat, lng, extra = {}) => ({ name, kind, sports, park: '', lat, lng, address: '', lit: false, count: 1, ...extra });
+const SAMPLE_VENUES = {
+  'Austin, TX': [
+    v('Pease Park courts', 'Basketball court', B, 30.2851, -97.7553, { park: 'Pease Park', count: 2, lit: true }),
+    v('Rosewood Park courts', 'Basketball court', B, 30.2716, -97.7151, { park: 'Rosewood Park', lit: true }),
+    v('Givens District Park courts', 'Basketball court', B, 30.2795, -97.6942, { park: 'Givens District Park', count: 2 }),
+    v('Dove Springs District Park courts', 'Basketball court', B, 30.1876, -97.7377, { park: 'Dove Springs District Park' }),
+    v('Mueller Lake Park courts', 'Basketball court', B, 30.2977, -97.7051, { park: 'Mueller Lake Park' }),
+    v('Zilker Park fields', 'Field', F, 30.2669, -97.7729, { park: 'Zilker Metropolitan Park', count: 4 }),
+    v('Roy G. Guerrero Park fields', 'Field', F, 30.2410, -97.7180, { park: 'Roy G. Guerrero Colorado River Park', count: 3 }),
+    v('Walnut Creek Metropolitan Park fields', 'Field', F, 30.3990, -97.6850, { park: 'Walnut Creek Metropolitan Park', count: 2 }),
+    v('Givens District Park fields', 'Field', F, 30.2791, -97.6930, { park: 'Givens District Park' }),
+    v('Pan American Recreation Center', 'Rec center', BF, 30.2588, -97.7210, { address: '2100 E 3rd St' }),
+    v('Austin Recreation Center', 'Rec center', B, 30.2795, -97.7543, { address: '1301 Shoal Creek Blvd' }),
+    v('Montopolis Recreation Center', 'Rec center', BF, 30.2344, -97.6936, { address: '1200 Montopolis Dr' }),
+    v('Northwest Recreation Center', 'Rec center', B, 30.3434, -97.7448, { address: '2913 Northland Dr' }),
+    v('Zilker Metropolitan Park', 'Park', BF, 30.2669, -97.7729),
+    v('Pease Park', 'Park', BF, 30.2850, -97.7550),
+    v('Butler Metro Park', 'Park', BF, 30.2610, -97.7520)
+  ],
+  'Dallas, TX': [
+    v('Reverchon Park courts', 'Basketball court', B, 32.7998, -96.8139, { park: 'Reverchon Park', lit: true }),
+    v('Kiest Park courts', 'Basketball court', B, 32.7140, -96.8590, { park: 'Kiest Park' }),
+    v('Fair Park fields', 'Field', F, 32.7792, -96.7600, { park: 'Fair Park', count: 2 }),
+    v('White Rock Lake Park fields', 'Field', F, 32.8270, -96.7290, { park: 'White Rock Lake Park' }),
+    v('MLK Jr. Recreation Center', 'Rec center', BF, 32.7650, -96.7700, { address: '2901 Pennsylvania Ave' }),
+    v('Fair Park', 'Park', BF, 32.7792, -96.7600)
+  ],
+  'Houston, TX': [
+    v('Emancipation Park courts', 'Basketball court', B, 29.7370, -95.3610, { park: 'Emancipation Park', lit: true }),
+    v('MacGregor Park courts', 'Basketball court', B, 29.7130, -95.3390, { park: 'MacGregor Park' }),
+    v('Memorial Park fields', 'Field', F, 29.7646, -95.4300, { park: 'Memorial Park', count: 3 }),
+    v('Discovery Green', 'Park', BF, 29.7530, -95.3590),
+    v('Fonde Recreation Center', 'Rec center', B, 29.7700, -95.3770, { address: '110 Sabine St' })
+  ]
+};
+export const getFunctions = () => ({ type: 'functions' });
+export const connectFunctionsEmulator = () => { };
+export function httpsCallable(f, name) {
+  return async data => {
+    await new Promise(r => setTimeout(r, 400));
+    if (name === 'venues') return { data: { city: data.city, venues: clone(SAMPLE_VENUES[data.city] || []), source: 'sample' } };
+    throw err('functions/not-found', 'Unknown function');
+  };
+}
+
 /* ───────── Sample data ───────── */
 function seed() {
   const ts = ms => Timestamp.fromMillis(ms), H = 36e5, D = 864e5, now = Date.now();

@@ -14,7 +14,7 @@ export const USE_EMULATORS = false;
 const html = fs.readFileSync(root + 'public/index.html', 'utf8');
 const body = html.match(/<body>([\s\S]*)<\/body>/)[1].replace(/<script type="module" src="app.js"><\/script>/, '').trim();
 const fonts = html.match(/<link rel="stylesheet" href="https:\/\/fonts[^>]*>/)[0];
-const V = '10.12.2', map = { imports: Object.fromEntries(['app', 'auth', 'firestore'].map(m => [`https://www.gstatic.com/firebasejs/${V}/firebase-${m}.js`, `./mock/firebase-${m}.js`])) };
+const V = '10.12.2', map = { imports: Object.fromEntries(['app', 'auth', 'firestore', 'functions'].map(m => [`https://www.gstatic.com/firebasejs/${V}/firebase-${m}.js`, `./mock/firebase-${m}.js`])) };
 fs.writeFileSync(out + 'index.html', `<title>NextMatch Preview</title>
 <meta name="description" content="Live preview of the NextMatch app with sample players.">
 <meta name="theme-color" content="#0c1217">

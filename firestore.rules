@@ -117,7 +117,10 @@ service cloud.firestore {
 
       allow read: if signedIn();
       allow create: if signedIn()
-        && data().keys().hasOnly(['hostUid', 'hostName', 'sport', 'format', 'need', 'venue', 'city', 'when', 'home', 'away', 'players', 'status', 'homeTeamId', 'homeTeamName', 'awayTeamId', 'awayTeamName', 'createdAt'])
+        && data().keys().hasOnly(['hostUid', 'hostName', 'sport', 'format', 'need', 'venue', 'venueLat', 'venueLng', 'city', 'when', 'home', 'away', 'players', 'status', 'homeTeamId', 'homeTeamName', 'awayTeamId', 'awayTeamName', 'createdAt'])
+        // Map location of the place, when it was picked from the list of courts and fields.
+        && (!('venueLat' in data()) || (data().venueLat is number && data().venueLat >= -90 && data().venueLat <= 90
+            && data().venueLng is number && data().venueLng >= -180 && data().venueLng <= 180))
         && data().hostUid == me()
         && data().home == [me()] && data().away == [] && data().players == [me()]
         && data().status == 'open'
@@ -212,6 +215,11 @@ service cloud.firestore {
           && data().uid == me()
           && str(data().text, 1, 1000);
       }
+    }
+
+    // ───────── Courts, fields and parks near each city (written by the server) ─────────
+    match /venues/{city} {
+      allow read: if signedIn();
     }
 
     // ───────── Safety reports ─────────

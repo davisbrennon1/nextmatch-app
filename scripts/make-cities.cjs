@@ -3,6 +3,7 @@
 // (geonames.org, CC BY 4.0) for populations and places without their own ZIP code.
 // Run from a folder where `npm install zipcodes@8.0.0 all-the-cities@3.1.0` was done:
 //   node /path/to/nextmatch-app/scripts/make-cities.cjs /path/to/nextmatch-app/public/us-cities.js
+// It also writes functions/us-cities.txt for the server.
 const fs = require('fs');
 const req = m => require(require.resolve(m, { paths: [process.cwd()] }));
 const STATES = 'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' ');
@@ -25,4 +26,6 @@ fs.writeFileSync(process.argv[2], `// Every U.S. city and town (50 states + DC),
 // Loaded only when someone opens the city finder. Regenerate with scripts/make-cities.cjs.
 export default ${JSON.stringify(rows.join('\n'))};
 `);
+// The server's copy, used to look up courts and fields near a city.
+fs.writeFileSync(require('path').join(__dirname, '..', 'functions', 'us-cities.txt'), rows.join('\n'));
 console.log(rows.length, 'places,', new Set(rows.map(r => r.split('|')[1])).size, 'states');

@@ -137,3 +137,11 @@
 .seg-sm button{padding:8px 12px;font-size:13px;overflow:hidden;text-overflow:ellipsis}
 .lb .rk-gap{text-align:center;color:var(--muted);letter-spacing:3px;padding:4px 0;border-top:1px solid var(--line)}
 @media (max-width:560px){.rank-filters .seg{min-width:0;flex-basis:100%}}
+/* Where: courts, fields and parks */
+.venue-hint{font-size:12px;margin-top:6px}
+.venue-opt span{display:flex;align-items:center;gap:8px;min-width:0}
+.venue-opt span i{font-style:normal;color:var(--brand);width:16px;text-align:center;flex-shrink:0}
+.venue-opt small{text-align:right;max-width:55%}
+.venuefield .city-sug{max-height:320px}
+.venue-opt{flex-direction:column;align-items:flex-start;gap:2px}
+.venue-opt small{text-align:left;max-width:100%;white-space:normal;padding-left:24px}

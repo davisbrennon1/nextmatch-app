@@ -16,7 +16,7 @@ It runs the real `public/app.js` on an in-browser stand-in for Firebase with sam
 2. Publish with the Artifact tool, passing `url` = the preview link above, `file_path` =
    `preview/dist/index.html`, `root` = the absolute path of `preview/dist`, and `files` mapping each of `app.js`, `us-cities.js`, `config.js`, `styles.css`,
    `auth.css`, `mock/core.js`, `mock/firebase-app.js`, `mock/firebase-auth.js`,
-   `mock/firebase-firestore.js` to itself (e.g. `"app.js": "app.js"`). Read the artifact first
+   `mock/firebase-firestore.js`, `mock/firebase-functions.js` to itself (e.g. `"app.js": "app.js"`). Read the artifact first
    if this session hasn't read or published it.
 3. Give the owner the link and say in plain words what changed.
 
@@ -33,7 +33,7 @@ The owner asked to take workouts out for now; flip it to `true` to bring them ba
 ## Checks before saving to GitHub
 
 - `node --check public/app.js`
-- `npm test` runs 118 security-rule checks and 28 server-code checks (needs Java and
+- `npm test` runs 122 security-rule checks and 38 server-code checks (needs Java and
   `npm install` in the root and in `functions/`). GitHub Actions runs the same on every push.
 - Pushing to `main` publishes the live site once the owner has finished the README's
   "Automatic publishing" setup. Server code is published by hand: `firebase deploy --only functions`.

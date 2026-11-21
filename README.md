@@ -214,6 +214,16 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
    that side gets the team score instead and career totals aren't changed.
 5. A disputed score awards nothing. Players talk it out and report again.
 
+## Courts, fields and parks
+
+When someone posts a game, the **Where** box suggests basketball courts, football and sports
+fields, parks and rec centers in their city, matched to the sport. The places come from
+**OpenStreetMap** (© OpenStreetMap contributors, openstreetmap.org/copyright). The server code
+(`functions/venues.js`) looks a city up the first time someone needs it, saves the list in the
+database (`venues`), and refreshes it after 30 days. Players can always type their own place.
+Courts that are missing on the map can be added by anyone at openstreetmap.org, and show up in
+the app within a month. Needs the Blaze plan (step 4b) and `firebase deploy --only functions`.
+
 ## Rankings and seasons
 
 Play → **Rankings** lets players switch between **their city** and the **whole world**, and
@@ -302,10 +312,10 @@ If a security test fails, nothing is published.
 
 ## Automated checks (for developers)
 
-- **118 security-rule checks**: for example, nobody can give themselves points, confirm
+- **122 security-rule checks**: for example, nobody can give themselves points, confirm
   their own side's score, join a team without the captain's approval, read another
   team's chat or other people's messages, or message someone who blocked them.
-- **28 server-code checks**: points awarded once and only to winners, ties and disputes,
+- **38 server-code checks**: points awarded once and only to winners, ties and disputes,
   team records, notifications, reminders, and auto-hiding reported posts.
 
 With Java installed:
