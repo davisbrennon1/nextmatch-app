@@ -112,6 +112,46 @@ check('both players reminded', (await notifs('bob')).some(n => n.type === 'remin
 check('no reminder for tomorrow’s game', !(await notifs('carol')).some(n => n.type === 'reminder'));
 check('reminders are not sent twice', (await lib.sendReminders()) === 0);
 
+console.log('— Seasons and tournaments');
+const lpast = Timestamp.fromDate(new Date(Date.now() - 36e5));
+await admin(async db => {
+  await setDoc(doc(db, 'leagues/L1'), { type: 'season', division: 'adult', sport: 'Basketball', format: '2v2', name: 'ATX Fall Hoops', description: '', start: Timestamp.fromDate(new Date(Date.now() - 864e6)), end: Timestamp.fromDate(new Date(Date.now() + 864e6)), city: 'Austin, TX', organizerUid: 'dave', organizerName: 'Dave', teamIds: ['t1'], teamNames: { t1: 'Eastside' }, staff: ['dave', 'alice'] });
+});
+await setDoc(doc(as('bob'), 'leagues/L1/entries/t2'), { teamName: 'North Loop', captainUid: 'bob', captainName: 'Bob', at: serverTimestamp() });
+check('organizer told about the entry', !!(await waitFor(async () => (await notifs('dave')).find(n => /North Loop wants to enter ATX Fall Hoops/.test(n.title)))));
+await updateDoc(doc(as('dave'), 'leagues/L1'), { teamIds: arrayUnion('t2'), teamNames: { t1: 'Eastside', t2: 'North Loop' }, staff: arrayUnion('bob'), lastChange: 't2' });
+check('team told it’s in', !!(await waitFor(async () => (await notifs('bob')).find(n => /North Loop is in ATX Fall Hoops/.test(n.title)))));
+await admin(db => setDoc(doc(db, 'games/s1'), { hostUid: 'alice', hostName: 'Alice', sport: 'Basketball', format: '2v2', need: 'Season game', venue: 'Pan Am', city: 'Austin, TX', when: lpast, home: ['alice', 'carol'], away: ['bob'], players: ['alice', 'carol', 'bob'], status: 'open', homeTeamId: 't1', homeTeamName: 'Eastside', awayTeamId: 't2', awayTeamName: 'North Loop', leagueId: 'L1', leagueName: 'ATX Fall Hoops' }));
+await updateDoc(doc(as('alice'), 'games/s1'), { status: 'reported', report: { by: 'alice', side: 'home', home: 21, away: 18, players: { alice: 15, carol: 6, bob: 18 }, at: serverTimestamp() } });
+await updateDoc(doc(as('bob'), 'games/s1'), { status: 'confirmed', responseBy: 'bob' });
+await waitFor(async () => (await read('games/s1')).status === 'final');
+const [st1, st2] = [await read('leagues/L1/standings/t1'), await read('leagues/L1/standings/t2')];
+check('standings updated', st1?.wins === 1 && st1.pf === 21 && st1.pa === 18 && st2?.losses === 1 && st2.pf === 18, JSON.stringify({ st1, st2 }));
+const [sa, sb] = [await read('leagues/L1/stats/alice'), await read('leagues/L1/stats/bob')];
+check('season stats per player', sa?.rp === 115 && sa.scored === 15 && sa.wins === 1 && sa.youth === false && sa.teamName === 'Eastside' && sb?.rp === 18 && sb.losses === 1, JSON.stringify({ sa, sb }));
+console.log('— Youth season');
+await admin(async db => {
+  await setDoc(doc(db, 'leagues/LY'), { type: 'season', division: 'youth', ageGroup: '12U', sport: 'Football', format: '11v11', name: 'Austin Youth Football 12U', city: 'Austin, TX', organizerUid: 'carol', organizerName: 'Carol', teamIds: ['y1', 'y2'], teamNames: { y1: 'Eagles', y2: 'Panthers' }, staff: ['carol', 'dave', 'erin'] });
+  await setDoc(doc(db, 'teams/y1'), { name: 'Eagles', sport: 'Football', city: 'Austin, TX', captainUid: 'dave', members: ['dave'], rp: 0, wins: 0, losses: 0, youth: true, ageGroup: '12U' });
+  await setDoc(doc(db, 'teams/y2'), { name: 'Panthers', sport: 'Football', city: 'Austin, TX', captainUid: 'erin', members: ['erin'], rp: 0, wins: 0, losses: 0, youth: true, ageGroup: '12U' });
+  await setDoc(doc(db, 'teams/y2/kids/k2'), { name: 'Mia T.', jersey: '7', parentUid: 'bob', parentName: 'Bob', status: 'approved' });
+  await setDoc(doc(db, 'teams/y1/kids/k3'), { name: 'Not Approved', jersey: '', parentUid: 'bob', parentName: 'Bob', status: 'pending' });
+});
+await setDoc(doc(as('alice'), 'teams/y1/kids/k1'), { name: 'Jayden R.', jersey: '12', parentUid: 'alice', parentName: 'Alice', status: 'pending', at: serverTimestamp() });
+check('coach told a parent added a kid', !!(await waitFor(async () => (await notifs('dave')).find(n => /Alice added Jayden R\. to Eagles/.test(n.title)))));
+await updateDoc(doc(as('dave'), 'teams/y1/kids/k1'), { status: 'approved' });
+const daveBefore = (await read('users/dave')).rp || 0;
+await admin(db => setDoc(doc(db, 'games/yg1'), { hostUid: 'dave', hostName: 'Dave', sport: 'Football', format: '11v11', need: 'Season game', venue: 'House Park', city: 'Austin, TX', when: lpast, home: ['dave'], away: ['erin'], players: ['dave', 'erin'], status: 'open', homeTeamId: 'y1', homeTeamName: 'Eagles', awayTeamId: 'y2', awayTeamName: 'Panthers', leagueId: 'LY', leagueName: 'Austin Youth Football 12U' }));
+await updateDoc(doc(as('dave'), 'games/yg1'), { status: 'reported', report: { by: 'dave', side: 'home', home: 21, away: 7, kids: { k1: 14, k3: 30, nobody: 50 }, at: serverTimestamp() } });
+await updateDoc(doc(as('erin'), 'games/yg1'), { status: 'confirmed', responseBy: 'erin', confirmKids: { k2: 7 } });
+const yg = await waitFor(async () => { const g = await read('games/yg1'); return g.status === 'final' && g });
+const [k1, k2, k3, kn] = [await read('leagues/LY/stats/kid_k1'), await read('leagues/LY/stats/kid_k2'), await read('leagues/LY/stats/kid_k3'), await read('leagues/LY/stats/kid_nobody')];
+check('kids get their own points: 100 for the win + points scored', k1?.rp === 114 && k1.scored === 14 && k1.wins === 1 && k1.youth === true && k1.parentUid === 'alice' && k2?.rp === 7 && k2.losses === 1, JSON.stringify({ k1, k2 }));
+check('unapproved or unknown kids get nothing', !k3 && !kn);
+check('coaches don’t earn points from youth games', ((await read('users/dave')).rp || 0) === daveBefore && Object.keys(yg.final.players).length === 0);
+check('youth standings updated', (await read('leagues/LY/standings/y1'))?.wins === 1);
+check('kid names stay off the game record', !JSON.stringify(yg).includes('Jayden'));
+
 console.log('— Courts, fields and parks');
 const V = require('../functions/venues.js');
 const sample = [

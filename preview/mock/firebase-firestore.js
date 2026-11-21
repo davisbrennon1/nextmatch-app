@@ -1,1 +1,1 @@
-export { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch, increment, connectFirestoreEmulator } from './core.js';
+export { getFirestore, collectionGroup, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch, increment, connectFirestoreEmulator } from './core.js';

@@ -214,6 +214,24 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
    that side gets the team score instead and career totals aren't changed.
 5. A disputed score awards nothing. Players talk it out and report again.
 
+## Seasons, tournaments and youth (little league)
+
+Play → **Seasons** lists seasons and tournaments. **Anyone can organize one**: adult basketball,
+adult flag football (7v7 and other sizes), youth tackle football, youth basketball, or youth flag
+football, with an age group for youth. Team captains ask to enter and the organizer approves.
+Captains of teams in a season schedule games between them. When both sides confirm a score,
+the server updates the **standings** (W-L, points for and against) and each player's **season
+stats**: 100 player points for a win plus their own points scored, counted only in that season.
+In **Rankings**, players can pick any of their seasons or tournaments to see who's best in it.
+
+**Youth teams and kids:** youth teams are run by adult coaches (the team's members). Kids don't
+get logins. A parent adds their child to a team (first name and last initial, optional jersey
+number) after confirming they're the parent or guardian, and a coach approves. Coaches enter each
+kid's points when reporting or confirming a youth score. Kids' names and stats are only visible to
+their parent, that team's coaches, and the season's organizer and coaches (security rules enforce
+this). Coaches don't earn player points from youth games. Before letting kids under 13 have their
+own logins, get legal advice: US law (COPPA) requires verified parental consent.
+
 ## Courts, fields and parks
 
 When someone posts a game, the **Where** box suggests basketball courts, football and sports
@@ -312,10 +330,10 @@ If a security test fails, nothing is published.
 
 ## Automated checks (for developers)
 
-- **122 security-rule checks**: for example, nobody can give themselves points, confirm
+- **161 security-rule checks**: for example, nobody can give themselves points, confirm
   their own side's score, join a team without the captain's approval, read another
   team's chat or other people's messages, or message someone who blocked them.
-- **38 server-code checks**: points awarded once and only to winners, ties and disputes,
+- **48 server-code checks**: points awarded once and only to winners, ties and disputes,
   team records, notifications, reminders, and auto-hiding reported posts.
 
 With Java installed:

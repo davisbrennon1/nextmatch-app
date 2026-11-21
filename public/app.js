@@ -6,7 +6,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, collection, query, where,
-  orderBy, limit, onSnapshot, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch, connectFirestoreEmulator
+  orderBy, limit, onSnapshot, collectionGroup, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch, connectFirestoreEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { getFunctions, httpsCallable, connectFunctionsEmulator } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js';
 
@@ -62,7 +62,17 @@ function art(kind) {
 
 /* ================= Game rules and sample content ================= */
 const SPORTS = ['Basketball', 'Flag football'];
-const FORMATS = { Basketball: ['1v1', '2v2', '3v3', '4v4', '5v5'], 'Flag football': ['2v2', '3v3', '4v4', '5v5', '6v6', '7v7'] };
+const FORMATS = { Basketball: ['1v1', '2v2', '3v3', '4v4', '5v5'], 'Flag football': ['2v2', '3v3', '4v4', '5v5', '6v6', '7v7'], Football: ['8v8', '9v9', '11v11'] };
+// Seasons and tournaments: what someone can organize.
+const DIVISIONS = [
+  { id: 'adult-hoops', label: 'Adult basketball', division: 'adult', sport: 'Basketball', format: '5v5' },
+  { id: 'adult-flag', label: 'Adult flag football (7v7 and more)', division: 'adult', sport: 'Flag football', format: '7v7' },
+  { id: 'youth-football', label: 'Youth tackle football (little league)', division: 'youth', sport: 'Football', format: '11v11' },
+  { id: 'youth-hoops', label: 'Youth basketball (little league)', division: 'youth', sport: 'Basketball', format: '5v5' },
+  { id: 'youth-flag', label: 'Youth flag football', division: 'youth', sport: 'Flag football', format: '7v7' }
+];
+const AGE_GROUPS = ['6U', '8U', '10U', '12U', '14U', 'High school'];
+const divisionLabel = l => (l.division === 'youth' ? 'Youth ' + (l.sport === 'Football' ? 'tackle football' : l.sport.toLowerCase()) + (l.ageGroup ? ' · ' + l.ageGroup : '') : 'Adult ' + l.sport.toLowerCase()) + ' · ' + l.format;
 // Player points: 100 for a win, plus 1 bonus point for every point your side scored.
 const WIN_POINTS = 100;
 const earnedFor = (score, won) => (won ? WIN_POINTS : 0) + Math.max(0, score | 0);
@@ -77,7 +87,7 @@ const WEEKLY = [{ id: 'footwork', t: 'Quick feet', d: '3 × 30s lateral line ste
 const TOURNAMENTS = [{ name: 'ATX Hoops Classic', sport: 'Basketball', format: '3v3', when: 'Nov 28', where: 'Austin', size: 16, art: 'ball' }, { name: 'Lone Star Flag Cup', sport: 'Flag football', format: '5v5', when: 'Dec 5', where: 'Austin', size: 12, art: 'football' }];
 const AV = ['#c2410c', '#15803d', '#1d4ed8', '#7e22ce', '#b45309', '#0f766e', '#be123c', '#334155'];
 const avatar = (n, cls = '') => `<span class="avatar ${cls}" style="--av:${AV[[...String(n || '?')].reduce((a, c) => a + c.charCodeAt(0), 0) % AV.length]}">${esc((String(n || '?').trim()[0] || '?').toUpperCase())}</span>`;
-const sportCls = s => s === 'Flag football' ? 'sport-flag' : 'sport-hoops';
+const sportCls = s => s === 'Basketball' ? 'sport-hoops' : 'sport-flag';
 function startOfDay(d = new Date()) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
 function weekKey(d = new Date()) { const x = startOfDay(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.toISOString().slice(0, 10) }
 function dayLabel(d) { const diff = Math.round((startOfDay(d) - startOfDay()) / 864e5); return diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : d.toLocaleDateString('en-US', { weekday: diff < 7 ? 'long' : 'short', month: 'short', day: 'numeric' }) }
@@ -90,10 +100,10 @@ const S = {
   uid: null, me: null, tab: 'today', play: 'games', feed: 'all', sport: 'All', fmt: 'All',
   games: [], posts: [], players: [], convos: [], following: new Set(), workouts: [],
   thread: null, msgs: [], profile: null, users: {}, profilePosts: {}, loaded: {},
-  myGames: [], world: {}, rankScope: 'city', rankPeriod: 'season', teams: [], myTeams: [], notifs: [], blocked: new Set(), team: null, teamMsgs: [], teamReqs: [], myReq: {}, gameCache: {}, teamCache: {}
+  myGames: [], world: {}, leagues: [], staffLeagues: [], leagueCache: {}, leagueStats: {}, leagueStand: {}, leagueGames: {}, leagueEntries: {}, kidsByTeam: {}, myKids: [], seasonsFilter: 'all', rankScope: 'city', rankPeriod: 'season', teams: [], myTeams: [], notifs: [], blocked: new Set(), team: null, teamMsgs: [], teamReqs: [], myReq: {}, gameCache: {}, teamCache: {}
 };
-let subs = [], citySubs = [], threadSub = null, commentSub = null, teamSubs = [], sheetSub = null, worldSubs = {};
-const unsubAll = () => { [...subs, ...citySubs, ...teamSubs, ...Object.values(worldSubs)].forEach(u => u()); worldSubs = {}; S.world = {}; subs = []; citySubs = []; teamSubs = []; threadSub?.(); threadSub = null; sheetSub?.(); sheetSub = null };
+let subs = [], citySubs = [], threadSub = null, commentSub = null, teamSubs = [], sheetSub = null, worldSubs = {}, leagueSubs = {}, pageSubs = [];
+const unsubAll = () => { [...subs, ...citySubs, ...teamSubs, ...pageSubs, ...Object.values(worldSubs), ...Object.values(leagueSubs).flat()].forEach(u => u()); worldSubs = {}; leagueSubs = {}; pageSubs = []; S.world = {}; S.leagueStats = {}; S.leagueStand = {}; S.leagueGames = {}; subs = []; citySubs = []; teamSubs = []; threadSub?.(); threadSub = null; sheetSub?.(); sheetSub = null };
 const myName = () => S.me?.name || 'Player';
 const myCity = () => S.me?.city || 'Austin, TX';
 
@@ -324,6 +334,8 @@ function enterApp(user, data) {
   subs.push(onSnapshot(query(collection(db, 'teams'), where('members', 'array-contains', S.uid), limit(20)), q => { S.myTeams = q.docs.map(d => ({ id: d.id, ...d.data() })); S.myTeams.forEach(t => S.teamCache[t.id] = t); renderSoon() }, fail('your teams')));
   subs.push(onSnapshot(query(collection(db, 'users', S.uid, 'notifications'), orderBy('at', 'desc'), limit(50)), q => { S.notifs = q.docs.map(d => ({ id: d.id, ...d.data() })); renderSoon(); if ($('#notifsheet')) openNotifs(false) }, fail('notifications')));
   subs.push(onSnapshot(collection(db, 'users', S.uid, 'blocked'), q => { S.blocked = new Set(q.docs.map(d => d.id)); renderSoon() }, fail('blocked players')));
+  subs.push(onSnapshot(query(collection(db, 'leagues'), where('staff', 'array-contains', S.uid), limit(50)), q => { S.staffLeagues = q.docs.map(d => ({ id: d.id, ...d.data() })); S.staffLeagues.forEach(l => S.leagueCache[l.id] = l); renderSoon() }, fail('your seasons')));
+  subs.push(onSnapshot(query(collectionGroup(db, 'kids'), where('parentUid', '==', S.uid)), q => { S.myKids = q.docs.map(d => ({ id: d.id, teamId: d.ref.parent.parent.id, ...d.data() })); renderSoon() }, fail('your kids')));
   render();
   route();
   if (FEATURES.pushKey && 'Notification' in window && Notification.permission === 'granted') enablePush(true);
@@ -333,6 +345,7 @@ function subscribeCity() {
   const since = startOfDay(); since.setDate(since.getDate() - 3);
   citySubs.push(onSnapshot(query(collection(db, 'games'), where('city', '==', myCity()), where('when', '>=', Timestamp.fromDate(since)), orderBy('when'), limit(150)), q => { S.games = q.docs.map(d => ({ id: d.id, ...d.data() })); S.loaded.games = true; S.games.forEach(g => ensureUsers([...g.home, ...g.away])); renderSoon() }, fail('games')));
   citySubs.push(onSnapshot(query(collection(db, 'teams'), where('city', '==', myCity()), limit(100)), q => { S.teams = q.docs.map(d => ({ id: d.id, ...d.data() })); S.teams.forEach(t => S.teamCache[t.id] = t); S.loaded.teams = true; renderSoon() }, fail('teams')));
+  citySubs.push(onSnapshot(query(collection(db, 'leagues'), where('city', '==', myCity()), limit(60)), q => { S.leagues = q.docs.map(d => ({ id: d.id, ...d.data() })); S.leagues.forEach(l => S.leagueCache[l.id] = l); S.loaded.leagues = true; renderSoon() }, fail('seasons')));
   citySubs.push(onSnapshot(query(collection(db, 'users'), where('city', '==', myCity()), limit(300)), q => { S.players = q.docs.map(d => ({ id: d.id, ...d.data() })); S.players.forEach(p => S.users[p.id] = p); S.loaded.players = true; renderSoon() }, fail('players')));
 }
 
@@ -346,6 +359,7 @@ function go(tab, opts = {}) {
   S.tab = tab; Object.assign(S, opts);
   if (tab !== 'messages') { threadSub?.(); threadSub = null }
   if (tab !== 'team') { teamSubs.forEach(u => u()); teamSubs = []; teamInside = []; teamInsideId = null }
+  if (tab !== 'league') { pageSubs.forEach(u => u()); pageSubs = [] }
   render(); window.scrollTo(0, 0);
 }
 
@@ -359,6 +373,7 @@ function routeTo(h) {
   const [kind, id] = String(h).split('/');
   if (kind === 'game' && id) openGame(id);
   else if (kind === 'team' && id) openTeam(id);
+  else if (kind === 'league' && id) openLeague(id);
   else if (kind === 'chat' && id) openThread(id);
   else if (kind === 'notifications') openNotifs();
 }
@@ -366,7 +381,7 @@ window.addEventListener('hashchange', route);
 
 const TABS = [['today', 'Today'], ['play', 'Play'], ['create', ''], ['feed', 'Feed'], ['me', 'Me']];
 function shell() {
-  const on = ['profile', 'team'].includes(S.tab) ? 'play' : S.tab;
+  const on = ['profile', 'team', 'league'].includes(S.tab) ? 'play' : S.tab;
   $('#tabbar').innerHTML = `<div class="rail-brand wordmark"><i></i>NextMatch</div>` + TABS.map(([k, l]) => k === 'create' ? `<button class="tab-create" aria-label="Create" onclick="openCreate()"><span>${ic('plus')}</span></button>` : `<button class="tab ${on === k ? 'on' : ''}" ${on === k ? 'aria-current="page"' : ''} onclick="go('${k}')">${ic(k)}<span>${l}</span></button>`).join('') + `<div class="rail-foot">Free friends beta · Texas · 18+<br>Points have no cash value.</div>`;
   const unread = S.convos.filter(c => isUnread(c) && !S.blocked.has(otherOf(c))).length, bell = S.notifs.filter(n => !n.read).length;
   $('#btn-msg').innerHTML = ic('msg') + (unread ? `<span class="badge-count">${unread}</span>` : '');
@@ -378,7 +393,7 @@ function render() {
   // Keep whatever someone is typing when live data re-renders the page.
   const a = document.activeElement, keep = a && a.id && $('#view').contains(a) ? { id: a.id, v: a.value, s: a.selectionStart } : null;
   shell();
-  const V = { today, play, feed, me: mePage, messages, profile: profilePage, team: teamPage }[S.tab] || today;
+  const V = { today, play, feed, me: mePage, messages, profile: profilePage, team: teamPage, league: leaguePage }[S.tab] || today;
   $('#view').innerHTML = V();
   if (keep) { const el = document.getElementById(keep.id); if (el) { el.value = keep.v; el.focus(); try { el.setSelectionRange(keep.s, keep.s) } catch { } } }
   if (S.tab === 'messages') { const b = $('#bubbles'); if (b) b.scrollTop = b.scrollHeight }
@@ -440,19 +455,53 @@ function openGame(id) {
 function drawGameSheet() {
   const g = getGame(S.sheetGame); if (!g || !$('#sheetbody') || $('#sb')?.dataset.kind !== 'game') return;
   const keep = $('#rf') ? [...$('#rf').querySelectorAll('input')].map(i => [i.id, i.value]) : null;
+  const keepY = $('#rfy, #cfk') ? [...document.querySelectorAll('#rfy input, #cfk input')].map(i => [i.id, i.value]) : null;
   const w = toDate(g.when), sd = sideOf(g), host = g.hostUid === S.uid;
+  // Season games: load the season; youth games: load my team's kids so I can enter their points.
+  const L = g.leagueId && S.leagueCache[g.leagueId];
+  if (g.leagueId && !L) getDoc(doc(db, 'leagues', g.leagueId)).then(d => { if (d.exists()) { S.leagueCache[d.id] = { id: d.id, ...d.data() }; drawGameSheet() } }).catch(() => { });
+  const youth = L?.division === 'youth' || g.sport === 'Football', myTeam = sd && g[sd + 'TeamId'];
+  if (youth && myTeam) watchKids(myTeam);
+  const myKids = youth && myTeam ? (S.kidsByTeam[myTeam] || []).filter(k => k.status === 'approved') : [];
+  const kidInputs = (prefix, label) => myKids.length ? `<fieldset class="rf-side rf-kids"><legend><span>${esc(label)}</span><b id="${prefix}-total">0</b></legend>${myKids.map(k => `<label class="rf-p" for="${prefix}-${k.id}"><span>${k.jersey ? '#' + esc(k.jersey) + ' ' : ''}${esc(k.name)}</span><input id="${prefix}-${k.id}" data-kid="${k.id}" type="number" inputmode="numeric" min="0" max="999" placeholder="0" aria-label="Points scored by ${esc(k.name)}"></label>`).join('')}</fieldset>` : `<p class="muted" style="font-size:12px;margin-top:8px">No approved players on your team yet, so no individual points will be recorded.</p>`;
   const col = s => `<div class="side-col"><div class="label">${s === 'home' ? 'Home' : 'Away'}${g[s + 'TeamName'] ? ' · Team' : ''}</div><h3>${esc(sideName(g, s))}</h3><div class="roster">${(g[s] || []).map(u => `<button class="chip" onclick="closeSheet();openProfile('${u}')">${esc(nameOf(u))}${u === g.hostUid ? ' ★' : ''}</button>`).join('') || '<span class="muted" style="font-size:13px">No one yet</span>'}</div><div class="muted" style="font-size:12px;margin-top:8px">${(g[s] || []).length}/${size(g)}</div>${canJoin(g, s) ? `<button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="joinGame('${g.id}','${s}')">Join ${s}</button>` : g[s + 'TeamId'] && !myTeamIds().has(g[s + 'TeamId']) && !mine(g) && g.status === 'open' ? '<p class="muted" style="font-size:12px;margin-top:8px">Team members only</p>' : ''}</div>`;
   let result = '';
-  if (g.status === 'final') result = `<div class="result-box final"><div class="label">Final · confirmed by both sides</div><div class="final-score">${g.final.home}–${g.final.away}</div><p>${g.final.winner ? esc(sideName(g, g.final.winner)) + ' wins.' : 'A draw.'}</p><div class="earned">${['home', 'away'].map(s => `<div class="earned-side"><span class="label">${esc(sideName(g, s))}${g.final.winner === s ? ' · Win' : ''}</span>${(g[s] || []).map(u => `<div class="earned-row ${u === S.uid ? 'me' : ''}"><span>${esc(nameOf(u))}${u === S.uid ? ' (you)' : ''}<small>${g.final.winner === s ? WIN_POINTS + ' win + ' : ''}${scoredBy(g, u, s)} scored</small></span><b>+${earnedBy(g, u, s)}</b></div>`).join('')}</div>`).join('')}</div><p class="muted" style="font-size:12px;margin-top:8px">Player points earned in this game.</p></div>`;
+  if (g.status === 'final' && (g.final.youth || youth)) result = `<div class="result-box final"><div class="label">Final · confirmed by both coaches</div><div class="final-score">${g.final.home}–${g.final.away}</div><p>${g.final.winner ? esc(sideName(g, g.final.winner)) + ' wins.' : 'A draw.'} Kids’ points are in the ${L ? `<button class="link" onclick="closeSheet();openLeague('${L.id}')">${esc(L.name)}</button>` : 'season'} leaders.</p></div>`;
+  else if (g.status === 'final') result = `<div class="result-box final"><div class="label">Final · confirmed by both sides</div><div class="final-score">${g.final.home}–${g.final.away}</div><p>${g.final.winner ? esc(sideName(g, g.final.winner)) + ' wins.' : 'A draw.'}</p><div class="earned">${['home', 'away'].map(s => `<div class="earned-side"><span class="label">${esc(sideName(g, s))}${g.final.winner === s ? ' · Win' : ''}</span>${(g[s] || []).map(u => `<div class="earned-row ${u === S.uid ? 'me' : ''}"><span>${esc(nameOf(u))}${u === S.uid ? ' (you)' : ''}<small>${g.final.winner === s ? WIN_POINTS + ' win + ' : ''}${scoredBy(g, u, s)} scored</small></span><b>+${earnedBy(g, u, s)}</b></div>`).join('')}</div>`).join('')}</div><p class="muted" style="font-size:12px;margin-top:8px">Player points earned in this game.</p></div>`;
   else if (g.status === 'confirmed') result = `<div class="result-box"><div class="label">Score confirmed</div><div class="final-score">${g.report.home}–${g.report.away}</div><p>Awarding player points…</p></div>`;
   else if (g.status === 'reported') {
     const r = g.report;
-    result = `<div class="result-box warn"><div class="label">Score reported by ${esc(nameOf(r.by))}</div><div class="final-score">${r.home}–${r.away}</div><p>${esc(sideName(g, 'home'))} ${r.home}, ${esc(sideName(g, 'away'))} ${r.away}.</p>${r.players ? `<p class="muted" style="font-size:13px;margin-top:4px">Points: ${breakdown(g, 'home', r.players)} | ${breakdown(g, 'away', r.players)}</p>` : ''}${needsMyConfirm(g) ? `<p style="margin-top:6px">Do the scores match what happened? Points are awarded once you confirm.</p><div class="actions" style="justify-content:flex-start"><button class="btn btn-primary btn-sm" onclick="respond('${g.id}','confirmed')">✓ Confirm ${r.home}–${r.away}</button><button class="btn btn-ghost btn-sm" onclick="respond('${g.id}','disputed')">Dispute</button></div>` : sd ? `<p class="muted" style="margin-top:6px">Waiting for someone on the ${other(r.side)} side to confirm.</p>` : ''}</div>`;
+    result = `<div class="result-box warn"><div class="label">Score reported by ${esc(nameOf(r.by))}</div><div class="final-score">${r.home}–${r.away}</div><p>${esc(sideName(g, 'home'))} ${r.home}, ${esc(sideName(g, 'away'))} ${r.away}.</p>${r.players && !youth ? `<p class="muted" style="font-size:13px;margin-top:4px">Points: ${breakdown(g, 'home', r.players)} | ${breakdown(g, 'away', r.players)}</p>` : ''}${needsMyConfirm(g) && youth ? `<p style="margin-top:6px">Does ${r.home}–${r.away} match what happened? Add your players’ points, then confirm.</p><form id="cfk">${kidInputs('ck', 'Your players’ points')}<div class="actions" style="justify-content:flex-start"><button class="btn btn-primary btn-sm">✓ Confirm ${r.home}–${r.away}</button><button type="button" class="btn btn-ghost btn-sm" onclick="respond('${g.id}','disputed')">Dispute</button></div></form>` : needsMyConfirm(g) ? `<p style="margin-top:6px">Do the scores match what happened? Points are awarded once you confirm.</p><div class="actions" style="justify-content:flex-start"><button class="btn btn-primary btn-sm" onclick="respond('${g.id}','confirmed')">✓ Confirm ${r.home}–${r.away}</button><button class="btn btn-ghost btn-sm" onclick="respond('${g.id}','disputed')">Dispute</button></div>` : sd ? `<p class="muted" style="margin-top:6px">Waiting for someone on the ${other(r.side)} side to confirm.</p>` : ''}</div>`;
   } else if (sd && started(g)) {
     const ready = g.home.length && g.away.length;
-    result = `<div class="result-box ${g.status === 'disputed' ? 'bad' : ''}">${g.status === 'disputed' ? `<div class="label">Score disputed</div><p style="margin-bottom:10px">The last report (${g.report.home}–${g.report.away}) was disputed. Agree on the score, then report it again.</p>` : '<div class="label">Report the final score</div>'}${ready ? `<form id="rf" class="rf"><div class="rf-sides">${['home', 'away'].map(s => `<fieldset class="rf-side"><legend><span>${esc(sideName(g, s))}</span><b id="rt-${s}">0</b></legend>${g[s].map(u => `<label class="rf-p" for="rp-${u}"><span>${esc(nameOf(u))}${u === S.uid ? ' (you)' : ''}</span><input id="rp-${u}" data-side="${s}" data-uid="${u}" type="number" inputmode="numeric" min="0" max="999" placeholder="0" aria-label="Points scored by ${esc(nameOf(u))}"></label>`).join('')}</fieldset>`).join('')}</div><button class="btn btn-primary btn-sm" style="margin-top:12px">Submit final score</button></form><p class="muted" style="font-size:12px;margin-top:8px">Enter the points each player scored. Team totals add up for you. The other side confirms before anyone gets points.</p>` : '<p class="muted">Both sides need at least one player before a score can be reported.</p>'}</div>`;
+    result = `<div class="result-box ${g.status === 'disputed' ? 'bad' : ''}">${g.status === 'disputed' ? `<div class="label">Score disputed</div><p style="margin-bottom:10px">The last report (${g.report.home}–${g.report.away}) was disputed. Agree on the score, then report it again.</p>` : '<div class="label">Report the final score</div>'}${ready && youth ? `<form id="rfy" class="rf"><div class="score-form"><label for="rh"><span>${esc(sideName(g, 'home'))}</span><input id="rh" type="number" inputmode="numeric" min="0" max="999" required></label><span class="dash">–</span><label for="ra"><span>${esc(sideName(g, 'away'))}</span><input id="ra" type="number" inputmode="numeric" min="0" max="999" required></label></div>${kidInputs('rk', 'Your players’ points')}<button class="btn btn-primary btn-sm" style="margin-top:12px">Submit final score</button></form><p class="muted" style="font-size:12px;margin-top:8px">The other coach confirms the score and adds their players’ points.</p>` : ready ? `<form id="rf" class="rf"><div class="rf-sides">${['home', 'away'].map(s => `<fieldset class="rf-side"><legend><span>${esc(sideName(g, s))}</span><b id="rt-${s}">0</b></legend>${g[s].map(u => `<label class="rf-p" for="rp-${u}"><span>${esc(nameOf(u))}${u === S.uid ? ' (you)' : ''}</span><input id="rp-${u}" data-side="${s}" data-uid="${u}" type="number" inputmode="numeric" min="0" max="999" placeholder="0" aria-label="Points scored by ${esc(nameOf(u))}"></label>`).join('')}</fieldset>`).join('')}</div><button class="btn btn-primary btn-sm" style="margin-top:12px">Submit final score</button></form><p class="muted" style="font-size:12px;margin-top:8px">Enter the points each player scored. Team totals add up for you. The other side confirms before anyone gets points.</p>` : '<p class="muted">Both sides need at least one player before a score can be reported.</p>'}</div>`;
   }
-  $('#sheetbody').innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><span class="sportbar ${sportCls(g.sport)}"><span class="dot"></span>${esc(g.sport)} · ${esc(g.format)}</span><button class="more" aria-label="More options" onclick="moreMenu('game','${g.id}','${g.hostUid}')">⋯</button></div><h2 style="margin-top:8px">${esc(gameTitle(g))}</h2><div style="display:grid;gap:4px;font-size:14px;margin-top:10px"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(g.venue)}, ${esc(g.city)} · <a class="link" href="${mapsLink(g)}" target="_blank" rel="noopener">Directions ↗</a></span><span style="color:var(--gold);font-weight:700">Win: +${WIN_POINTS} player points, plus 1 for every point you score</span></div>${result}<div class="sides-grid">${col('home')}${col('away')}</div><p class="muted" style="font-size:13px;margin-top:12px">${g.sport === 'Flag football' ? 'Flag pulls end the play. No tackling. Captains confirm field size and scoring before kickoff.' : 'Games to 21, win by 2 unless captains agree otherwise.'}</p><div class="actions">${host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="cancelGame('${g.id}')">Cancel game</button>` : ''}${sd && !host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="leaveGame('${g.id}')">Leave game</button>` : ''}${sd && !['final', 'confirmed'].includes(g.status) ? `<button class="btn btn-primary" onclick="startGame('${g.id}')">Open scoreboard</button>` : `<button class="btn btn-ghost" onclick="closeSheet()">Close</button>`}</div>`;
+  $('#sheetbody').innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><span class="sportbar ${sportCls(g.sport)}"><span class="dot"></span>${esc(g.sport)} · ${esc(g.format)}</span><button class="more" aria-label="More options" onclick="moreMenu('game','${g.id}','${g.hostUid}')">⋯</button></div>${g.leagueId ? `<button class="league-link" onclick="closeSheet();openLeague('${g.leagueId}')">${L?.type === 'tournament' ? '🏆' : '📅'} ${esc(g.leagueName || 'Season game')} ›</button>` : ''}<h2 style="margin-top:8px">${esc(gameTitle(g))}</h2><div style="display:grid;gap:4px;font-size:14px;margin-top:10px"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(g.venue)}, ${esc(g.city)} · <a class="link" href="${mapsLink(g)}" target="_blank" rel="noopener">Directions ↗</a></span><span style="color:var(--gold);font-weight:700">Win: +${WIN_POINTS} player points, plus 1 for every point you score</span></div>${result}<div class="sides-grid">${col('home')}${col('away')}</div><p class="muted" style="font-size:13px;margin-top:12px">${g.sport === 'Flag football' ? 'Flag pulls end the play. No tackling. Captains confirm field size and scoring before kickoff.' : 'Games to 21, win by 2 unless captains agree otherwise.'}</p><div class="actions">${host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="cancelGame('${g.id}')">Cancel game</button>` : ''}${sd && !host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="leaveGame('${g.id}')">Leave game</button>` : ''}${sd && !['final', 'confirmed'].includes(g.status) ? `<button class="btn btn-primary" onclick="startGame('${g.id}')">Open scoreboard</button>` : `<button class="btn btn-ghost" onclick="closeSheet()">Close</button>`}</div>`;
+  // Youth forms: keep typed values, show totals, check they add up.
+  const kidsOf = (form, prefix) => { const m = {}; let sum = 0, bad = false; form.querySelectorAll('input[data-kid]').forEach(i => { const v = i.value.trim() === '' ? 0 : Number(i.value); if (!Number.isInteger(v) || v < 0 || v > 999) bad = true; m[i.dataset.kid] = v; sum += v }); const t = document.getElementById(prefix + '-total'); if (t) t.textContent = sum; return { m, sum, bad } };
+  const fy = $('#rfy');
+  if (fy) {
+    if (keepY) keepY.forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v });
+    fy.oninput = () => kidsOf(fy, 'rk'); kidsOf(fy, 'rk');
+    fy.onsubmit = e => {
+      e.preventDefault(); const h = +$('#rh').value, a = +$('#ra').value, k = kidsOf(fy, 'rk'), mine = sd === 'home' ? h : a;
+      if (!Number.isInteger(h) || !Number.isInteger(a) || $('#rh').value === '' || $('#ra').value === '') return toast('Enter both team scores.');
+      if (k.bad) return toast('Points must be whole numbers from 0 to 999.');
+      if (myKids.length && k.sum !== mine) return toast(`Your players’ points add up to ${k.sum}, but your team scored ${mine}.`);
+      reportScore(g.id, h, a, null, myKids.length ? k.m : null);
+    };
+  }
+  const fc = $('#cfk');
+  if (fc) {
+    if (keepY) keepY.forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v });
+    fc.oninput = () => kidsOf(fc, 'ck'); kidsOf(fc, 'ck');
+    fc.onsubmit = e => {
+      e.preventDefault(); const k = kidsOf(fc, 'ck'), mine = g.report[sd];
+      if (k.bad) return toast('Points must be whole numbers from 0 to 999.');
+      if (myKids.length && k.sum !== mine) return toast(`Your players’ points add up to ${k.sum}, but your team scored ${mine}.`);
+      respond(g.id, 'confirmed', myKids.length ? k.m : null);
+    };
+  }
   const f = $('#rf');
   if (f) {
     if (keep) keep.forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v });
@@ -480,16 +529,17 @@ function cancelGame(id) {
   sheet(`<h2>Cancel this game?</h2><p class="muted">Everyone who joined will see it disappear from their schedule.</p><div class="actions"><button class="btn btn-ghost" onclick="openGame('${id}')">Keep it</button><button class="btn btn-primary" id="cg">Cancel game</button></div>`);
   $('#cg').onclick = async () => { try { await deleteDoc(doc(db, 'games', id)); closeSheet(); toast('Game canceled.') } catch (e) { console.error(e); toast('Couldn’t cancel. Try again.') } };
 }
-async function reportScore(id, h, a, players = null) {
+async function reportScore(id, h, a, players = null, kids = null) {
   const g = getGame(id), sd = sideOf(g);
   if (!sd || !Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 999 || a > 999) return toast('Enter both scores as whole numbers.');
   const report = { by: S.uid, side: sd, home: h, away: a, at: serverTimestamp() };
   if (players) report.players = Object.fromEntries([...g.home, ...g.away].map(u => [u, players[u] || 0]));
+  if (kids) report.kids = kids;
   try { await updateDoc(doc(db, 'games', id), { status: 'reported', report }); toast('Score sent. The other side will be asked to confirm.') }
   catch (e) { console.error(e); toast('Couldn’t submit the score. Try again.') }
 }
-async function respond(id, status) {
-  try { await updateDoc(doc(db, 'games', id), { status, responseBy: S.uid }); toast(status === 'confirmed' ? 'Confirmed. Points are on the way.' : 'Disputed. Talk it out, then report again.') }
+async function respond(id, status, kids = null) {
+  try { await updateDoc(doc(db, 'games', id), { status, responseBy: S.uid, ...(kids && status === 'confirmed' ? { confirmKids: kids } : {}) }); toast(status === 'confirmed' ? 'Confirmed. Points are on the way.' : 'Disputed. Talk it out, then report again.') }
   catch (e) { console.error(e); toast('Couldn’t save your answer. Try again.') }
 }
 /* ───────── Courts, fields and parks near a city (from OpenStreetMap, via the server) ───────── */
@@ -560,29 +610,47 @@ function bindVenueField(id, city, sportOf) {
   }).catch(() => { loaded = true; if (document.body.contains(hint)) hint.textContent = 'Couldn’t load nearby places right now. Type the place instead.' });
   return { picked: () => chosen && input.value === chosen.name ? chosen : null, refresh: () => { if (chosen && !chosen.sports.includes(sportOf())) chosen = null; drawQuick(); show() } };
 }
-function postGame(vs = '', vsTeam = '') {
+function postGame(vs = '', vsTeam = '', leagueId = '') {
+  const L0 = leagueId && S.leagueCache[leagueId], sports0 = [...SPORTS, ...(S.myTeams.some(t => t.sport === 'Football') ? ['Football'] : [])], sport0 = L0?.sport || S.teamCache[vsTeam]?.sport || (S.me.sports || [])[0];
   const def = new Date(Date.now() + 36e5 * 3); def.setMinutes(0, 0, 0);
   const local = new Date(def - def.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
-  sheet(`<h2>Post a game</h2><p class="muted">${vs ? 'Challenge ' + esc(vs) + '.' : 'Anyone in ' + esc(myCity()) + ' can join.'}</p><form id="pg"><label class="field" for="pgs"><span>Sport</span><select id="pgs">${SPORTS.map(s => `<option ${(S.teamCache[vsTeam]?.sport || (S.me.sports || [])[0]) === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label><label class="field" for="pgf"><span>Format</span><select id="pgf"></select></label><label class="field" for="pgt"><span>Play as</span><select id="pgt"></select></label><label class="field" for="pgo"><span>Opponent team (optional)</span><select id="pgo"></select></label><label class="field" for="pgn"><span>Looking for</span><select id="pgn">${(vs ? ['Challenge: ' + vs] : ['Open challenge', 'Need players', 'Team challenge', 'Casual run']).map(x => `<option>${esc(x.slice(0, 40))}</option>`).join('')}</select></label><label class="field" for="pgv"><span>Where</span></label><div class="cityfield venuefield"><input id="pgv" required minlength="2" maxlength="100" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="pgv-list" placeholder="Search courts, fields and parks"><div class="city-sug" id="pgv-list" role="listbox" hidden></div></div><div class="venue-quick" id="pgv-quick" aria-label="Quick picks"></div><p class="muted venue-hint" id="pgv-hint">Looking up courts and fields in ${esc(myCity())}…</p><label class="field" for="pgd"><span>When</span><input id="pgd" type="datetime-local" required value="${local}"></label><p id="pgerr" class="auth-err" hidden></p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="pggo">Post game</button></div></form>`);
+  sheet(`<h2>Post a game</h2><p class="muted">${vs ? 'Challenge ' + esc(vs) + '.' : 'Anyone in ' + esc(myCity()) + ' can join.'}</p><form id="pg"><label class="field" for="pgs"><span>Sport</span><select id="pgs">${sports0.map(s => `<option value="${s}" ${sport0 === s ? 'selected' : ''}>${s === 'Football' ? 'Tackle football (youth)' : s}</option>`).join('')}</select></label><label class="field" for="pgl"><span>Season or tournament</span><select id="pgl"></select></label><label class="field" for="pgf"><span>Format</span><select id="pgf"></select></label><label class="field" for="pgt"><span>Play as</span><select id="pgt"></select></label><label class="field" for="pgo"><span>Opponent team (optional)</span><select id="pgo"></select></label><label class="field" for="pgn"><span>Looking for</span><select id="pgn">${(vs ? ['Challenge: ' + vs] : ['Open challenge', 'Need players', 'Team challenge', 'Casual run']).map(x => `<option>${esc(x.slice(0, 40))}</option>`).join('')}</select></label><label class="field" for="pgv"><span>Where</span></label><div class="cityfield venuefield"><input id="pgv" required minlength="2" maxlength="100" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="pgv-list" placeholder="Search courts, fields and parks"><div class="city-sug" id="pgv-list" role="listbox" hidden></div></div><div class="venue-quick" id="pgv-quick" aria-label="Quick picks"></div><p class="muted venue-hint" id="pgv-hint">Looking up courts and fields in ${esc(myCity())}…</p><label class="field" for="pgd"><span>When</span><input id="pgd" type="datetime-local" required value="${local}"></label><p id="pgerr" class="auth-err" hidden></p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="pggo">Post game</button></div></form>`);
+  let lid = leagueId;
   const fill = () => {
-    const sp = $('#pgs').value, mineT = S.myTeams.filter(t => t.sport === sp), opp = S.teams.filter(t => t.sport === sp && !myTeamIds().has(t.id) && ok(t.captainUid));
-    $('#pgf').innerHTML = FORMATS[sp].map(f => `<option ${f === '3v3' ? 'selected' : ''}>${f}</option>`).join('');
-    $('#pgt').innerHTML = `<option value="">Just me (pickup)</option>` + mineT.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
-    $('#pgo').innerHTML = `<option value="">Anyone</option>` + opp.map(t => `<option value="${t.id}" ${t.id === vsTeam ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+    const sp = $('#pgs').value, leagues = myLeagues().filter(l => l.sport === sp && (l.teamIds || []).some(t => myTeamIds().has(t)) && leagueStatus(l) !== 'Finished');
+    if (!leagues.some(l => l.id === lid)) lid = '';
+    if (sp === 'Football' && !lid && leagues.length) lid = leagues[0].id; // tackle football is season-only
+    const L = lid && S.leagueCache[lid];
+    $('#pgl').innerHTML = (sp === 'Football' ? '' : '<option value="">Not a season game (pickup or friendly)</option>') + leagues.map(l => `<option value="${l.id}" ${l.id === lid ? 'selected' : ''}>${l.type === 'tournament' ? '🏆' : '📅'} ${esc(l.name)}</option>`).join('');
+    $('#pgl').closest('label').hidden = !leagues.length && sp !== 'Football';
+    const mineT = L ? S.myTeams.filter(t => L.teamIds.includes(t.id)) : S.myTeams.filter(t => t.sport === sp && !t.youth);
+    const opp = L ? L.teamIds.filter(t => !myTeamIds().has(t)).map(t => ({ id: t, name: L.teamNames?.[t] || 'Team' })) : S.teams.filter(t => t.sport === sp && !t.youth && !myTeamIds().has(t.id) && ok(t.captainUid));
+    $('#pgf').innerHTML = (L ? [L.format] : FORMATS[sp]).map(f => `<option ${f === '3v3' || f === L?.format ? 'selected' : ''}>${f}</option>`).join('');
+    $('#pgt').innerHTML = (L ? '' : `<option value="">Just me (pickup)</option>`) + mineT.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+    $('#pgo').innerHTML = (L ? '' : `<option value="">Anyone</option>`) + opp.map(t => `<option value="${t.id}" ${t.id === vsTeam ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+    $('#pgo').closest('label').querySelector('span').textContent = L ? 'Opponent' : 'Opponent team (optional)';
+    const need = L ? (L.type === 'tournament' ? 'Tournament game' : 'Season game') : null;
+    if (need && ![...$('#pgn').options].some(o => o.value === need)) $('#pgn').insertAdjacentHTML('afterbegin', `<option>${need}</option>`);
+    if (need) $('#pgn').value = need;
   };
-  $('#pgs').onchange = () => { fill(); venueBox.refresh() }; fill();
+  $('#pgs').onchange = () => { lid = ''; fill(); venueBox.refresh() };
+  $('#pgl').onchange = () => { lid = $('#pgl').value; fill() };
+  fill();
   const venueBox = bindVenueField('pgv', myCity(), () => $('#pgs').value);
   $('#pg').onsubmit = async e => {
     e.preventDefault(); const when = new Date($('#pgd').value), venue = $('#pgv').value.trim(), err = $('#pgerr');
     if (venue.length < 2) { err.hidden = false; err.textContent = 'Add where you’re playing.'; return }
     if (isNaN(when) || when < Date.now() - 6e4) { err.hidden = false; err.textContent = 'Pick a time in the future.'; return }
-    const ht = $('#pgt').value, at = $('#pgo').value;
+    const ht = $('#pgt').value, at = $('#pgo').value, L = lid && S.leagueCache[lid];
+    if ($('#pgs').value === 'Football' && !L) { err.hidden = false; err.textContent = 'Tackle football games are played in a youth season. Enter your team in one first.'; return }
+    if (L && (!ht || !at)) { err.hidden = false; err.textContent = `Pick your team and an opponent from ${L.name}.`; return }
     $('#pggo').disabled = true;
     try {
       const g = { hostUid: S.uid, hostName: myName(), sport: $('#pgs').value, format: $('#pgf').value, need: $('#pgn').value, venue, city: myCity(), when: Timestamp.fromDate(when), home: [S.uid], away: [], players: [S.uid], status: 'open', createdAt: serverTimestamp() };
       const spot = venueBox.picked(); if (spot) Object.assign(g, { venueLat: spot.lat, venueLng: spot.lng });
       if (ht) Object.assign(g, { homeTeamId: ht, homeTeamName: S.teamCache[ht].name });
-      if (at) Object.assign(g, { awayTeamId: at, awayTeamName: S.teamCache[at].name });
+      if (at) Object.assign(g, { awayTeamId: at, awayTeamName: L ? L.teamNames?.[at] || 'Team' : S.teamCache[at].name });
+      if (L) Object.assign(g, { leagueId: L.id, leagueName: L.name });
       await addDoc(collection(db, 'games'), g); closeSheet(); go('play', { play: 'games', sport: 'All', fmt: 'All' }); toast('Game posted.');
     } catch (x) { console.error(x); err.hidden = false; err.textContent = 'Couldn’t post the game. Check your connection and try again.'; $('#pggo').disabled = false }
   };
@@ -640,9 +708,10 @@ function rankChart() {
 
 /* ================= Play ================= */
 function play() {
-  const segs = [['games', 'Games'], ['players', 'Rankings'], ['teams', 'Teams'], ['tournaments', 'Tournaments']];
-  const btn = S.play === 'teams' ? '<button class="btn btn-primary" onclick="createTeam()">＋ Create a team</button>' : '<button class="btn btn-primary" onclick="postGame()">＋ Post a game</button>';
-  return `<div class="greet"><div><div class="label">${esc(myCity())} · ${SEASON.label}</div><h1 style="margin-top:6px">Play</h1></div>${btn}</div><div class="seg" role="tablist">${segs.map(([k, l]) => `<button role="tab" aria-selected="${S.play === k}" class="${S.play === k ? 'on' : ''}" onclick="S.play='${k}';render()">${l}</button>`).join('')}</div>${{ games: playGames, teams: playTeams, players: playPlayers, tournaments: playTours }[S.play]()}`;
+  const segs = [['games', 'Games'], ['players', 'Rankings'], ['leagues', 'Seasons'], ['teams', 'Teams']];
+  if (!segs.some(x => x[0] === S.play)) S.play = 'games';
+  const btn = S.play === 'teams' ? '<button class="btn btn-primary" onclick="createTeam()">＋ Create a team</button>' : S.play === 'leagues' ? '<button class="btn btn-primary" onclick="createLeague()">＋ Create a season</button>' : '<button class="btn btn-primary" onclick="postGame()">＋ Post a game</button>';
+  return `<div class="greet"><div><div class="label">${esc(myCity())} · ${SEASON.label}</div><h1 style="margin-top:6px">Play</h1></div>${btn}</div><div class="seg" role="tablist">${segs.map(([k, l]) => `<button role="tab" aria-selected="${S.play === k}" class="${S.play === k ? 'on' : ''}" onclick="S.play='${k}';render()">${l}</button>`).join('')}</div>${{ games: playGames, teams: playTeams, players: playPlayers, leagues: playLeagues }[S.play]()}`;
 }
 function playGames() {
   if (!S.loaded.games) return '<div class="loading">Loading games…</div>';
@@ -652,7 +721,7 @@ function playGames() {
   return `<div class="toolbar"><div class="chips">${['All', ...SPORTS].map(s => `<button class="chip ${S.sport === s ? 'on' : ''}" onclick="S.sport='${s}';S.fmt='All';render()">${s !== 'All' ? `<span class="dot ${sportCls(s)}"></span>` : ''}${s}</button>`).join('')}</div><select aria-label="Game size" onchange="S.fmt=this.value;render()"><option value="All">Any size</option>${fm.map(f => `<option ${S.fmt === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div><div class="games">${Object.entries(groups).map(([d, gs]) => `<div class="day-label">${d}</div>${gs.map(gameRow).join('')}`).join('') || `<div class="empty">No upcoming games in ${esc(myCity())}${S.sport !== 'All' || S.fmt !== 'All' ? ' that match' : ''}. Post the first one.</div>`}</div>
   <button class="card" style="width:100%;text-align:left;margin-top:16px;display:flex;gap:14px;align-items:center" onclick="startGame()"><span style="width:48px;height:48px;border-radius:12px;display:grid;place-items:center;background:var(--surface-2);color:var(--brand)">${ic('whistle', false, 'width="24" height="24"')}</span><span style="flex:1"><b style="display:block">Practice scoreboard</b><small class="muted">Try the clock and scoring without a game.</small></span><span class="link">Open →</span></button>`;
 }
-function teamRow(t) { const m = myTeamIds().has(t.id); return `<button class="lb-row ${sportCls(t.sport)}" onclick="openTeam('${t.id}')"><span class="dot" style="justify-self:center"></span>${avatar(t.name, 'sm')}<span style="min-width:0"><strong>${esc(t.name)}${m ? ' · Your team' : ''}</strong><small>${esc(t.sport)} · ${t.members.length} player${t.members.length === 1 ? '' : 's'} · ${tierOf(t.rp || 0).name}</small></span><span class="pts">${(t.rp || 0).toLocaleString()}<small>${t.wins || 0}–${t.losses || 0}</small></span></button>` }
+function teamRow(t) { const m = myTeamIds().has(t.id); return `<button class="lb-row ${sportCls(t.sport)}" onclick="openTeam('${t.id}')"><span class="dot" style="justify-self:center"></span>${avatar(t.name, 'sm')}<span style="min-width:0"><strong>${esc(t.name)}${m ? ' · Your team' : ''}</strong><small>${t.youth ? 'Youth ' + esc(t.ageGroup || '') + ' · ' : ''}${esc(t.sport === 'Football' ? 'Tackle football' : t.sport)} · ${t.youth ? t.members.length + ' coach' + (t.members.length === 1 ? '' : 'es') : t.members.length + ' player' + (t.members.length === 1 ? '' : 's')} · ${tierOf(t.rp || 0).name}</small></span><span class="pts">${(t.rp || 0).toLocaleString()}<small>${t.wins || 0}–${t.losses || 0}</small></span></button>` }
 function playTeams() {
   if (!S.loaded.teams) return '<div class="loading">Loading teams…</div>';
   const others = S.teams.filter(t => !myTeamIds().has(t.id) && ok(t.captainUid)).sort((a, b) => (b.rp || 0) - (a.rp || 0));
@@ -668,7 +737,10 @@ function worldList(period) {
 }
 function playPlayers() {
   const scope = S.rankScope, period = S.rankPeriod, md = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const filters = `<div class="rank-filters"><div class="seg seg-sm" role="group" aria-label="Where">${[['city', '⌖ ' + myCity()], ['world', '🌎 World']].map(([k, l]) => `<button class="${scope === k ? 'on' : ''}" aria-pressed="${scope === k}" onclick="S.rankScope='${k}';render()">${esc(l)}</button>`).join('')}</div><div class="seg seg-sm" role="group" aria-label="When">${[['season', SEASON.label], ['all', 'All-time']].map(([k, l]) => `<button class="${period === k ? 'on' : ''}" aria-pressed="${period === k}" onclick="S.rankPeriod='${k}';render()">${l}</button>`).join('')}</div></div>`;
+  const mine = myLeagues(), inLeague = scope.startsWith('league:');
+  const leaguePick = mine.length ? `<select class="rank-league" aria-label="Season or tournament" onchange="S.rankScope=this.value||'city';render()"><option value="">🏆 My seasons & tournaments…</option>${mine.map(l => `<option value="league:${l.id}" ${scope === 'league:' + l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>` : '';
+  const filters = `<div class="rank-filters"><div class="seg seg-sm" role="group" aria-label="Where">${[['city', '⌖ ' + myCity()], ['world', '🌎 World']].map(([k, l]) => `<button class="${scope === k ? 'on' : ''}" aria-pressed="${scope === k}" onclick="S.rankScope='${k}';render()">${esc(l)}</button>`).join('')}</div>${inLeague ? '' : `<div class="seg seg-sm" role="group" aria-label="When">${[['season', SEASON.label], ['all', 'All-time']].map(([k, l]) => `<button class="${period === k ? 'on' : ''}" aria-pressed="${period === k}" onclick="S.rankPeriod='${k}';render()">${l}</button>`).join('')}</div>`}${leaguePick}</div>`;
+  if (inLeague) { const l = S.leagueCache[scope.slice(7)]; return filters + (l ? leadersHTML(l, 100) + `<p class="muted" style="font-size:13px;margin-top:12px">Player points from games in ${esc(l.name)} only: 100 for a win plus 1 for every point scored. <button class="link" onclick="openLeague('${l.id}')">Open ${l.type} →</button></p>` : '<div class="loading">Loading…</div>') }
   const src = scope === 'city' ? (S.loaded.players ? S.players : null) : worldList(period);
   if (!src) return filters + '<div class="loading">Loading rankings…</div>';
   const rows = src.filter(p => ok(p.id)).map(p => ({ p, s: statsFor(p, period) })).filter(x => scope === 'city' || x.s.rp > 0 || x.p.id === S.uid)
@@ -687,12 +759,168 @@ function playTours() {
 async function interest(name) { const has = (S.me.tournamentInterest || []).includes(name); try { await updateDoc(doc(db, 'users', S.uid), { tournamentInterest: has ? arrayRemove(name) : arrayUnion(name) }); toast(has ? 'Removed from the interest list.' : 'You’re on the interest list.') } catch (e) { console.error(e); toast('Couldn’t save. Try again.') } }
 
 /* ================= Teams ================= */
+/* ================= Seasons and tournaments ================= */
+const isStaff = l => (l.staff || []).includes(S.uid);
+// Seasons I'm part of: my team is in it, or I organize/coach in it, or my kid plays in it.
+function myLeagues() {
+  const mine = myTeamIds(), kidTeams = new Set(S.myKids.map(k => k.teamId)), seen = new Map();
+  for (const l of [...S.staffLeagues, ...S.leagues]) if (!seen.has(l.id) && (isStaff(l) || (l.teamIds || []).some(t => mine.has(t) || kidTeams.has(t)))) seen.set(l.id, l);
+  return [...seen.values()].sort((a, b) => toDate(b.start) - toDate(a.start));
+}
+const leagueStatus = l => { const now = Date.now(); return now < toDate(l.start) ? 'Upcoming' : now > toDate(l.end) ? 'Finished' : 'In progress' };
+const shortDate = d => toDate(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function leagueCard(l) {
+  const mine = (l.teamIds || []).some(t => myTeamIds().has(t)), st = leagueStatus(l);
+  return `<button class="card league-card ${sportCls(l.sport)}" onclick="openLeague('${l.id}')"><span class="league-badge ${l.type}">${l.type === 'tournament' ? '🏆 Tournament' : '📅 Season'}</span><h3>${esc(l.name)}</h3><span class="sportbar"><span class="dot"></span>${esc(divisionLabel(l))}</span><small class="muted">${shortDate(l.start)} – ${shortDate(l.end)} · ${(l.teamIds || []).length} team${(l.teamIds || []).length === 1 ? '' : 's'} · ${st}${mine ? ' · <b>Your team is in</b>' : isStaff(l) ? ' · <b>You organize</b>' : ''}</small></button>`;
+}
+function playLeagues() {
+  if (!S.loaded.leagues) return '<div class="loading">Loading seasons…</div>';
+  const f = S.seasonsFilter, mine = myLeagues(), mineIds = new Set(mine.map(l => l.id));
+  const pass = l => f === 'all' || (f === 'youth' ? l.division === 'youth' : l.type === f);
+  const others = S.leagues.filter(l => !mineIds.has(l.id) && pass(l) && leagueStatus(l) !== 'Finished').sort((a, b) => toDate(a.start) - toDate(b.start));
+  const chips = [['all', 'All'], ['season', 'Seasons'], ['tournament', 'Tournaments'], ['youth', 'Youth / little league']].map(([k, l]) => `<button class="chip ${f === k ? 'on' : ''}" onclick="S.seasonsFilter='${k}';render()">${l}</button>`).join('');
+  return `<div class="toolbar"><div class="chips">${chips}</div></div>${mine.filter(pass).length ? `<div class="label" style="margin:4px 0 8px">Yours</div><div class="league-grid">${mine.filter(pass).map(leagueCard).join('')}</div>` : ''}<div class="label" style="margin:18px 0 8px">In ${esc(myCity())}</div><div class="league-grid">${others.map(leagueCard).join('') || `<div class="empty">No ${f === 'tournament' ? 'tournaments' : f === 'youth' ? 'youth seasons' : 'seasons'} here yet. Start one: tap <b>＋ Create a season</b>.</div>`}</div>`;
+}
+function createLeague() {
+  const day = n => { const d = new Date(Date.now() + n * 864e5); return d.toISOString().slice(0, 10) };
+  sheet(`<h2>Create a season or tournament</h2><p class="muted">You’ll be the organizer. Team captains ask to enter and you approve them.</p><form id="cl"><div class="seg seg-sm" role="radiogroup" aria-label="Type" style="margin-top:12px"><button type="button" class="on" data-type="season" aria-pressed="true">📅 Season</button><button type="button" data-type="tournament" aria-pressed="false">🏆 Tournament</button></div><label class="field" for="cld"><span>Division</span><select id="cld">${DIVISIONS.map(d => `<option value="${d.id}">${d.label}</option>`).join('')}</select></label><label class="field" for="clf"><span>Game size</span><select id="clf"></select></label><label class="field" for="cla" id="cla-wrap" hidden><span>Age group</span><select id="cla">${AGE_GROUPS.map(a => `<option>${a}</option>`).join('')}</select></label><label class="field" for="cln"><span>Name</span><input id="cln" required minlength="3" maxlength="60" placeholder="e.g. ATX Fall Hoops League"></label><div class="two-up"><label class="field" for="cls"><span>Starts</span><input id="cls" type="date" required value="${day(7)}"></label><label class="field" for="cle"><span>Ends</span><input id="cle" type="date" required value="${day(70)}"></label></div><label class="field" for="clx"><span>About (optional)</span><textarea id="clx" maxlength="500" placeholder="Rules, game days, fees, where games are played…"></textarea></label><p id="clerr" class="auth-err" hidden></p><p class="muted" style="font-size:12px;margin-top:10px" id="clnote"></p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="clgo">Create</button></div></form>`);
+  let type = 'season';
+  $('#cl .seg').onclick = e => { const b = e.target.closest('button'); if (!b) return; type = b.dataset.type; $('#cl .seg').querySelectorAll('button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b) }) };
+  const fill = () => { const d = DIVISIONS.find(x => x.id === $('#cld').value); $('#clf').innerHTML = FORMATS[d.sport].filter(f => f !== '1v1').map(f => `<option ${f === d.format ? 'selected' : ''}>${f}</option>`).join(''); $('#cla-wrap').hidden = d.division !== 'youth'; $('#clnote').textContent = d.division === 'youth' ? 'Youth teams are run by adult coaches. Parents add their kids to a team and coaches approve them. Kids’ names and stats are only shown to their parents, their coaches and you.' : '' };
+  $('#cld').onchange = fill; fill();
+  $('#cl').onsubmit = async e => {
+    e.preventDefault(); const d = DIVISIONS.find(x => x.id === $('#cld').value), err = $('#clerr'), name = $('#cln').value.trim().replace(/\s+/g, ' ');
+    const start = new Date($('#cls').value + 'T00:00'), end = new Date($('#cle').value + 'T23:59');
+    if (name.length < 3) { err.hidden = false; err.textContent = 'Give it a name.'; return }
+    if (isNaN(start) || isNaN(end) || end <= start) { err.hidden = false; err.textContent = 'The end date must be after the start date.'; return }
+    $('#clgo').disabled = true;
+    try {
+      const l = { type, division: d.division, sport: d.sport, format: $('#clf').value, name, description: $('#clx').value.trim(), city: myCity(), start: Timestamp.fromDate(start), end: Timestamp.fromDate(end), organizerUid: S.uid, organizerName: myName(), teamIds: [], teamNames: {}, staff: [S.uid], createdAt: serverTimestamp() };
+      if (d.division === 'youth') l.ageGroup = $('#cla').value;
+      const r = await addDoc(collection(db, 'leagues'), l); closeSheet(); openLeague(r.id); toast((type === 'tournament' ? 'Tournament' : 'Season') + ' created. Share it so teams can enter.');
+    } catch (x) { console.error(x); err.hidden = false; err.textContent = 'Couldn’t create it. Check your connection and try again.'; $('#clgo').disabled = false }
+  };
+}
+// Live data for one season: standings, leaders, games, and (for the organizer) entry requests.
+function watchLeague(id) {
+  if (leagueSubs[id]) return;
+  const l = S.leagueCache[id]; if (!l) return;
+  const list = leagueSubs[id] = [];
+  list.push(onSnapshot(collection(db, 'leagues', id, 'standings'), q => { S.leagueStand[id] = q.docs.map(d => ({ id: d.id, ...d.data() })); renderSoon() }, fail('standings')));
+  const statsQ = l.division === 'adult' ? query(collection(db, 'leagues', id, 'stats'), where('youth', '==', false), orderBy('rp', 'desc'), limit(100))
+    : isStaff(l) ? query(collection(db, 'leagues', id, 'stats'), orderBy('rp', 'desc'), limit(150)) : query(collection(db, 'leagues', id, 'stats'), where('parentUid', '==', S.uid));
+  list.push(onSnapshot(statsQ, q => { S.leagueStats[id] = q.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.rp || 0) - (a.rp || 0)); renderSoon() }, fail('season leaders')));
+  list.push(onSnapshot(query(collection(db, 'games'), where('leagueId', '==', id), orderBy('when'), limit(200)), q => { S.leagueGames[id] = q.docs.map(d => ({ id: d.id, ...d.data() })); renderSoon() }, fail('schedule')));
+  if (l.organizerUid === S.uid) list.push(onSnapshot(collection(db, 'leagues', id, 'entries'), q => { S.leagueEntries[id] = q.docs.map(d => ({ id: d.id, ...d.data() })); renderSoon() }, fail('entries')));
+}
+function openLeague(id) {
+  closeSheet(); pageSubs.forEach(u => u()); pageSubs = [];
+  S.league = id; S.tab = 'league'; render(); window.scrollTo(0, 0);
+  pageSubs.push(onSnapshot(doc(db, 'leagues', id), d => {
+    if (!d.exists()) { S.leagueCache[id] = { missing: true }; renderSoon(); return }
+    const fresh = !S.leagueCache[id] || S.leagueCache[id].missing;
+    S.leagueCache[id] = { id, ...d.data() };
+    if (fresh || !leagueSubs[id]) { (leagueSubs[id] || []).forEach(u => u()); delete leagueSubs[id]; watchLeague(id) }
+    // my own pending entries (captains)
+    S.myTeams.filter(t => t.captainUid === S.uid).forEach(t => getDoc(doc(db, 'leagues', id, 'entries', t.id)).then(e => { (S.myEntries ??= {})[id + '/' + t.id] = e.exists(); renderSoon() }).catch(() => { }));
+    renderSoon();
+  }, fail('this season')));
+}
+function standingsHTML(l) {
+  const rows = (l.teamIds || []).map(t => ({ id: t, name: l.teamNames?.[t] || 'Team', w: 0, l: 0, t: 0, pf: 0, pa: 0, ...Object.fromEntries(Object.entries((S.leagueStand[l.id] || []).find(x => x.id === t) || {}).map(([k, v]) => [{ wins: 'w', losses: 'l', ties: 't' }[k] || k, v])) }))
+    .sort((a, b) => b.w - a.w || a.l - b.l || (b.pf - b.pa) - (a.pf - a.pa));
+  if (!rows.length) return '<div class="empty">No teams yet. Captains can enter from this page.</div>';
+  return `<div class="table-scroll"><table class="standings"><thead><tr><th scope="col">#</th><th scope="col">Team</th><th scope="col">W</th><th scope="col">L</th>${rows.some(r => r.t) ? '<th scope="col">T</th>' : ''}<th scope="col">PF</th><th scope="col">PA</th><th scope="col">+/−</th></tr></thead><tbody>${rows.map((r, i) => `<tr class="${myTeamIds().has(r.id) ? 'me' : ''}"><td>${i + 1}</td><td><button class="link-plain" onclick="openTeam('${r.id}')">${esc(r.name)}</button></td><td>${r.w}</td><td>${r.l}</td>${rows.some(x => x.t) ? `<td>${r.t}</td>` : ''}<td>${r.pf}</td><td>${r.pa}</td><td>${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function leadersHTML(l, n = 10) {
+  watchLeague(l.id);
+  const list = S.leagueStats[l.id];
+  if (!list) return '<div class="loading">Loading leaders…</div>';
+  const youth = l.division === 'youth', who = x => youth ? `${esc(x.name)}${x.jersey ? ` <em>#${esc(x.jersey)}</em>` : ''}` : esc(x.name);
+  const rows = list.slice(0, n).map((x, i) => `<${youth ? 'div' : `button onclick="openProfile('${x.id}')"`} class="lb-row ${x.id === S.uid || x.parentUid === S.uid ? 'me' : ''}"><span class="n">${i + 1}</span>${avatar(x.name, 'sm')}<span style="min-width:0"><strong>${who(x)}${x.parentUid === S.uid ? ' · Your kid' : x.id === S.uid ? ' · You' : ''}</strong><small>${esc(x.teamName || '')} · ${x.scored || 0} pts scored · ${x.games || 0} game${x.games === 1 ? '' : 's'}</small></span><span class="pts">${(x.rp || 0).toLocaleString()}<small>${x.wins || 0}–${x.losses || 0}</small></span></${youth ? 'div' : 'button'}>`).join('');
+  const note = youth ? (isStaff(l) ? '<p class="muted youth-note">🔒 Kids’ names and stats are only shown to their parents, the coaches and the organizer.</p>' : '<p class="muted youth-note">🔒 To protect kids, you only see your own kids’ stats. Coaches and the organizer see the full leaderboard.</p>') : '';
+  return `<div class="lb">${rows || `<div class="empty" style="border:0">No ${youth ? 'kid' : 'player'} stats yet. They show up after the first confirmed game.</div>`}</div>${note}`;
+}
+function leaguePage() {
+  const l = S.leagueCache[S.league];
+  if (!l) return '<div class="loading">Loading…</div>';
+  if (l.missing) return '<div class="empty">This season was removed.</div>';
+  const org = l.organizerUid === S.uid, myIn = S.myTeams.filter(t => (l.teamIds || []).includes(t.id));
+  const eligible = S.myTeams.filter(t => t.captainUid === S.uid && t.sport === l.sport && !!t.youth === (l.division === 'youth') && !(l.teamIds || []).includes(t.id));
+  const pending = eligible.filter(t => S.myEntries?.[l.id + '/' + t.id]);
+  const games = S.leagueGames[l.id] || [], played = games.filter(g => g.status === 'final'), upcoming = games.filter(g => g.status !== 'final' && toDate(g.when) >= startOfDay());
+  const entries = org ? (S.leagueEntries[l.id] || []).filter(e => !(l.teamIds || []).includes(e.id)) : [];
+  const btns = [myIn.some(t => t.captainUid === S.uid) ? `<button class="btn btn-primary btn-sm" onclick="postGame('','','${l.id}')">⚔ Schedule a ${l.type} game</button>` : '',
+    eligible.length > pending.length ? `<button class="btn btn-primary btn-sm" onclick="enterLeague('${l.id}')">Enter my team</button>` : '',
+    pending.length ? `<span class="pill-note">⏳ ${esc(pending.map(t => t.name).join(', '))} waiting for approval</span>` : '',
+    `<button class="btn btn-ghost btn-sm" onclick="shareLeague('${l.id}')">Share</button>`].join('');
+  const hint = !myIn.length && !eligible.length && !org ? `<p class="muted" style="font-size:13px;margin-top:10px">${l.division === 'youth' ? 'Coaches: create a youth team for this age group (Play → Teams), then enter it here. Parents: ask your coach to enter, then add your kid on the team page.' : `To play, a team captain enters the team. Create a ${l.sport.toLowerCase()} team under Play → Teams.`}</p>` : '';
+  return `<button class="link" style="margin-bottom:14px" onclick="go('play',{play:'leagues'})">‹ Back to seasons</button><div class="cols two"><div style="min-width:0">
+  <section class="pcard"><div class="stripe"></div><div class="label">${l.type === 'tournament' ? '🏆 Tournament' : '📅 Season'} · ${esc(divisionLabel(l))}</div><h1>${esc(l.name)}</h1><span class="tier">${leagueStatus(l)} · ${shortDate(l.start)} – ${shortDate(l.end)}</span><div class="pc-stats"><div><b>${(l.teamIds || []).length}</b><span>Teams</span></div><div><b>${played.length}</b><span>Played</span></div><div><b>${upcoming.length}</b><span>Upcoming</span></div><div><b>${esc(l.city.split(',')[0])}</b><span>City</span></div></div><div class="row">${btns}</div></section>${hint}
+  ${entries.length ? `<div class="sec"><h2>Teams asking to enter</h2></div><section class="card">${entries.map(e => `<div class="team-row">${avatar(e.teamName)}<div style="min-width:0"><strong>${esc(e.teamName)}</strong><small>Captain ${esc(e.captainName)}</small></div><span style="display:flex;gap:6px"><button class="btn btn-sm btn-primary" onclick="approveEntry('${l.id}','${e.id}')">Approve</button><button class="btn btn-sm btn-ghost" onclick="declineEntry('${l.id}','${e.id}')">Decline</button></span></div>`).join('')}</section>` : ''}
+  <div class="sec"><h2>Standings</h2></div><section class="card">${standingsHTML(l)}</section>
+  <div class="sec"><h2>${l.division === 'youth' ? 'Top players' : 'Leaders'}</h2><button class="link" onclick="S.rankScope='league:${l.id}';go('play',{play:'players'})">Full rankings →</button></div>${leadersHTML(l, 10)}
+  <div class="sec"><h2>Schedule</h2></div><div class="games">${upcoming.map(gameRow).join('') || `<div class="empty" style="border:0">No upcoming games. Captains of teams in this ${l.type} can schedule them.</div>`}</div>
+  ${played.length ? `<div class="sec"><h2>Results</h2></div><div class="games">${played.slice().reverse().map(gameRow).join('')}</div>` : ''}
+  </div><aside class="rail">${leagueSide(l)}</aside>${window.innerWidth < 960 ? `<div style="display:grid;gap:18px">${leagueSide(l)}</div>` : ''}</div>`;
+}
+function leagueSide(l) {
+  return `<section class="card"><div class="label">About</div><p style="font-size:14px;margin-top:8px;white-space:pre-wrap">${esc(l.description || 'No details yet.')}</p><p class="muted" style="font-size:13px;margin-top:10px">Organized by ${esc(l.organizerName)}</p></section><section class="card"><div class="label">Teams · ${(l.teamIds || []).length}</div>${(l.teamIds || []).map(t => `<div class="team-row">${avatar(l.teamNames?.[t] || 'T')}<div style="min-width:0"><strong>${esc(l.teamNames?.[t] || 'Team')}</strong><small>${myTeamIds().has(t) ? 'Your team' : ''}</small></div><button class="btn btn-ghost btn-sm" onclick="openTeam('${t}')">View</button></div>`).join('') || '<p class="muted" style="font-size:13px;margin-top:8px">No teams yet.</p>'}</section>`;
+}
+function enterLeague(id) {
+  const l = S.leagueCache[id], eligible = S.myTeams.filter(t => t.captainUid === S.uid && t.sport === l.sport && !!t.youth === (l.division === 'youth') && !(l.teamIds || []).includes(t.id) && !S.myEntries?.[id + '/' + t.id]);
+  sheet(`<h2>Enter ${esc(l.name)}</h2><p class="muted">The organizer, ${esc(l.organizerName)}, approves teams.</p><form id="el"><label class="field" for="elt"><span>Team</span><select id="elt">${eligible.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></label><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary">Ask to enter</button></div></form>`);
+  $('#el').onsubmit = async e => {
+    e.preventDefault(); const t = S.teamCache[$('#elt').value] || S.myTeams.find(x => x.id === $('#elt').value);
+    try { await setDoc(doc(db, 'leagues', id, 'entries', t.id), { teamName: t.name, captainUid: S.uid, captainName: myName(), at: serverTimestamp() }); (S.myEntries ??= {})[id + '/' + t.id] = true; closeSheet(); render(); toast('Request sent to the organizer.') }
+    catch (x) { console.error(x); toast('Couldn’t send the request.') }
+  };
+}
+async function approveEntry(lid, teamId) {
+  const l = S.leagueCache[lid], e = (S.leagueEntries[lid] || []).find(x => x.id === teamId); if (!e) return;
+  try { await updateDoc(doc(db, 'leagues', lid), { teamIds: arrayUnion(teamId), teamNames: { ...(l.teamNames || {}), [teamId]: e.teamName }, staff: arrayUnion(e.captainUid), lastChange: teamId }); toast(e.teamName + ' is in.') }
+  catch (x) { console.error(x); toast('Couldn’t approve. Try again.') }
+}
+async function declineEntry(lid, teamId) { try { await deleteDoc(doc(db, 'leagues', lid, 'entries', teamId)) } catch (x) { console.error(x) } }
+function shareLeague(id) { const url = location.origin + '/#league/' + id; (navigator.share ? navigator.share({ title: S.leagueCache[id].name, text: 'Join this on NextMatch', url }) : navigator.clipboard.writeText(url).then(() => toast('Link copied.'))).catch(() => { }) }
+
+/* ================= Youth teams: kids added by parents, approved by coaches ================= */
+const kidSubs = {};
+function watchKids(tid) {
+  if (kidSubs[tid]) return;
+  const t = S.teamCache[tid] || S.myTeams.find(x => x.id === tid); if (!t?.youth) return;
+  const q = t.members.includes(S.uid) ? collection(db, 'teams', tid, 'kids') : query(collection(db, 'teams', tid, 'kids'), where('parentUid', '==', S.uid));
+  kidSubs[tid] = onSnapshot(q, snap => { S.kidsByTeam[tid] = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)); renderSoon(); if ($('#sb')?.dataset.kind === 'game') drawGameSheet() }, fail('players'));
+  subs.push(kidSubs[tid]);
+}
+function kidsHTML(t) {
+  watchKids(t.id);
+  const kids = S.kidsByTeam[t.id], coach = t.members.includes(S.uid);
+  if (!kids) return '<div class="loading">Loading players…</div>';
+  const rows = kids.map(k => `<div class="team-row"><span class="jersey">${esc(k.jersey || '—')}</span><div style="min-width:0"><strong>${esc(k.name)}</strong><small>${k.status === 'approved' ? 'On the roster' : 'Waiting for coach'}${coach ? ' · Parent: ' + esc(k.parentName) : ''}</small></div>${coach && k.status !== 'approved' ? `<button class="btn btn-sm btn-primary" onclick="approveKid('${t.id}','${k.id}')">Approve</button>` : coach || k.parentUid === S.uid ? `<button class="btn btn-sm btn-ghost" onclick="removeKid('${t.id}','${k.id}')">Remove</button>` : '<span></span>'}</div>`).join('');
+  return `<section class="card"><div class="label">${coach ? `Players · ${kids.filter(k => k.status === 'approved').length}` : 'Your kids on this team'}</div>${rows || `<p class="muted" style="font-size:13px;margin-top:8px">${coach ? 'No players yet. Parents add their kids from this page; you approve them.' : 'None yet.'}</p>`}${coach ? '' : `<button class="btn btn-primary btn-sm" style="margin-top:12px;width:100%" onclick="addKid('${t.id}')">＋ Add my kid to this team</button>`}<p class="muted youth-note">🔒 Kids don’t have their own logins. Only their parent and the coaches can see them.</p></section>`;
+}
+function addKid(tid) {
+  const t = S.teamCache[tid];
+  sheet(`<h2>Add your kid to ${esc(t.name)}</h2><p class="muted">The coach approves them. To protect kids, we only use a first name and last initial.</p><form id="ak"><div class="two-up"><label class="field" for="akf"><span>First name</span><input id="akf" required maxlength="20" autocomplete="off"></label><label class="field" for="akl"><span>Last initial</span><input id="akl" required maxlength="1" autocomplete="off" style="text-transform:uppercase"></label></div><label class="field" for="akj"><span>Jersey number (optional)</span><input id="akj" inputmode="numeric" maxlength="3" autocomplete="off"></label><label style="display:flex;gap:10px;align-items:start;margin-top:14px;font-size:14px" for="akc"><input id="akc" type="checkbox" required style="width:auto;margin-top:4px;accent-color:var(--brand)">I’m this child’s parent or legal guardian, and I agree to them being on this team.</label><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary">Add</button></div></form>`);
+  $('#ak').onsubmit = async e => {
+    e.preventDefault(); const first = $('#akf').value.trim().replace(/[^A-Za-zÀ-ÿ' -]/g, ''), last = $('#akl').value.trim().slice(0, 1).toUpperCase();
+    if (first.length < 1 || !/[A-Za-z]/.test(last)) return toast('Enter a first name and last initial.');
+    try { await addDoc(collection(db, 'teams', tid, 'kids'), { name: `${first[0].toUpperCase() + first.slice(1)} ${last}.`, jersey: $('#akj').value.replace(/\D/g, '').slice(0, 3), parentUid: S.uid, parentName: myName(), status: 'pending', at: serverTimestamp() }); closeSheet(); toast('Added. The coach will approve them.') }
+    catch (x) { console.error(x); toast('Couldn’t add. Try again.') }
+  };
+}
+async function approveKid(tid, kid) { try { await updateDoc(doc(db, 'teams', tid, 'kids', kid), { status: 'approved' }); toast('On the roster.') } catch (x) { console.error(x); toast('Couldn’t approve.') } }
+async function removeKid(tid, kid) { try { await deleteDoc(doc(db, 'teams', tid, 'kids', kid)); toast('Removed.') } catch (x) { console.error(x); toast('Couldn’t remove.') } }
+
 function createTeam() {
-  sheet(`<h2>Create a team</h2><p class="muted">You’ll be the captain. Players ask to join and you approve them.</p><form id="ct"><label class="field" for="ctn"><span>Team name</span><input id="ctn" required minlength="2" maxlength="40" placeholder="e.g. Eastside Buckets"></label><label class="field" for="cts"><span>Sport</span><select id="cts">${SPORTS.map(s => `<option>${s}</option>`).join('')}</select></label><p class="muted" style="font-size:12px;margin-top:10px">Based in ${esc(myCity())}. Up to 15 players.</p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="ctgo">Create team</button></div></form>`);
+  sheet(`<h2>Create a team</h2><p class="muted">You’ll be the captain. Players ask to join and you approve them.</p><form id="ct"><label class="field" for="ctn"><span>Team name</span><input id="ctn" required minlength="2" maxlength="40" placeholder="e.g. Eastside Buckets"></label><label class="check-row" for="cty"><input id="cty" type="checkbox"> Youth team (little league): I’m the coach</label><label class="field" for="cts"><span>Sport</span><select id="cts"></select></label><label class="field" for="ctg" id="ctg-wrap" hidden><span>Age group</span><select id="ctg">${AGE_GROUPS.map(a => `<option ${a === '12U' ? 'selected' : ''}>${a}</option>`).join('')}</select></label><p class="muted" style="font-size:12px;margin-top:10px" id="ctnote">Based in ${esc(myCity())}. Up to 15 players.</p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="ctgo">Create team</button></div></form>`);
+  const fillTeam = () => { const y = $('#cty').checked; $('#cts').innerHTML = (y ? ['Football', ...SPORTS] : SPORTS).map(x => `<option value="${x}">${x === 'Football' ? 'Tackle football' : x}</option>`).join(''); $('#ctg-wrap').hidden = !y; $('#ctnote').textContent = y ? `Based in ${myCity()}. You and other adult coaches are the team; parents add their kids and you approve them.` : `Based in ${myCity()}. Up to 15 players.` };
+  $('#cty').onchange = fillTeam; fillTeam();
   $('#ct').onsubmit = async e => {
     e.preventDefault(); const name = $('#ctn').value.trim().replace(/\s+/g, ' '); if (name.length < 2) return toast('Name needs at least 2 characters.');
     $('#ctgo').disabled = true;
-    try { const r = await addDoc(collection(db, 'teams'), { name, sport: $('#cts').value, city: myCity(), captainUid: S.uid, members: [S.uid], rp: 0, wins: 0, losses: 0, createdAt: serverTimestamp() }); closeSheet(); openTeam(r.id); toast('Team created. Share it so your crew can join.') }
+    try { const r = await addDoc(collection(db, 'teams'), { name, sport: $('#cts').value, city: myCity(), captainUid: S.uid, members: [S.uid], rp: 0, wins: 0, losses: 0, createdAt: serverTimestamp(), ...($('#cty').checked ? { youth: true, ageGroup: $('#ctg').value } : {}) }); closeSheet(); openTeam(r.id); toast('Team created. Share it so your crew can join.') }
     catch (x) { console.error(x); toast('Couldn’t create the team. Try again.'); $('#ctgo').disabled = false }
   };
 }
@@ -722,16 +950,16 @@ function teamPage() {
   if (t.missing) return '<div class="empty">This team no longer exists.</div>';
   const member = t.members.includes(S.uid), cap = t.captainUid === S.uid, req = S.myReq[t.id];
   const games = [...S.games, ...S.myGames].filter((g, i, a) => a.findIndex(x => x.id === g.id) === i && (g.homeTeamId === t.id || g.awayTeamId === t.id)).sort((a, b) => toDate(b.when) - toDate(a.when)).slice(0, 8);
-  const btns = member ? `${cap ? `<button class="btn btn-primary btn-sm" onclick="postGame('','')">⚔ Post a team game</button><button class="btn btn-ghost btn-sm" onclick="renameTeam()">Rename</button>` : `<button class="btn btn-ghost btn-sm" onclick="leaveTeam()">Leave team</button>`}<button class="btn btn-ghost btn-sm" onclick="shareTeam()">Invite players</button>` : `${req ? '<button class="btn btn-ghost btn-sm" onclick="cancelRequest()">Request sent · Cancel</button>' : `<button class="btn btn-primary btn-sm" onclick="requestJoin()">Ask to join</button>`}${S.myTeams.some(m => m.sport === t.sport && m.captainUid === S.uid) ? `<button class="btn btn-ghost btn-sm" onclick="postGame('${esc(t.name).replace(/'/g, '&#39;')}','${t.id}')">⚔ Challenge</button>` : ''}<button class="btn btn-ghost btn-sm" onclick="moreMenu('team','${t.id}','${t.captainUid}')">⋯</button>`;
+  const btns = member ? `${cap ? `<button class="btn btn-primary btn-sm" onclick="postGame('','')">⚔ Post a team game</button><button class="btn btn-ghost btn-sm" onclick="renameTeam()">Rename</button>` : `<button class="btn btn-ghost btn-sm" onclick="leaveTeam()">Leave team</button>`}<button class="btn btn-ghost btn-sm" onclick="shareTeam()">Invite players</button>` : `${req ? '<button class="btn btn-ghost btn-sm" onclick="cancelRequest()">Request sent · Cancel</button>' : `<button class="btn btn-primary btn-sm" onclick="requestJoin()">${t.youth ? 'Ask to join as a coach' : 'Ask to join'}</button>`}${S.myTeams.some(m => m.sport === t.sport && m.captainUid === S.uid) ? `<button class="btn btn-ghost btn-sm" onclick="postGame('${esc(t.name).replace(/'/g, '&#39;')}','${t.id}')">⚔ Challenge</button>` : ''}<button class="btn btn-ghost btn-sm" onclick="moreMenu('team','${t.id}','${t.captainUid}')">⋯</button>`;
   return `<button class="link" style="margin-bottom:14px" onclick="go('play',{play:'teams'})">‹ Back to teams</button><div class="cols two"><div style="min-width:0">
   <section class="pcard"><div class="stripe"></div><div class="label">${esc(t.city)} · ${esc(t.sport)} · Team</div><h1>${esc(t.name)}</h1><span class="tier">★ ${tierOf(t.rp || 0).name}</span><div class="pc-stats"><div><b>${(t.rp || 0).toLocaleString()}</b><span>Player pts</span></div><div><b>${t.wins || 0}–${t.losses || 0}</b><span>Record</span></div><div><b>${t.members.length}</b><span>Players</span></div><div><b>${games.filter(g => g.status !== 'final' && toDate(g.when) > new Date()).length}</b><span>Upcoming</span></div></div><div class="row">${btns}</div></section>
   ${cap && S.teamReqs.length ? `<div class="sec"><h2>Join requests</h2></div><section class="card">${S.teamReqs.filter(r => ok(r.id)).map(r => `<div class="team-row">${avatar(r.name)}<div style="min-width:0"><button onclick="openProfile('${r.id}')"><strong>${esc(r.name)}</strong></button><small>Wants to join</small></div><span style="display:flex;gap:6px"><button class="btn btn-sm btn-primary" onclick="approve('${r.id}')">Approve</button><button class="btn btn-sm btn-ghost" onclick="decline('${r.id}')">Decline</button></span></div>`).join('')}</section>` : ''}
   ${member ? `<div class="sec"><h2>Team chat</h2></div><section class="card team-chat"><div class="bubbles" id="teamchat" onscroll="this.dataset.user=this.scrollTop+this.clientHeight<this.scrollHeight-40?'1':''">${S.teamMsgs.filter(m => ok(m.uid)).map(m => `<div class="bubble ${m.uid === S.uid ? 'me' : ''}">${m.uid === S.uid ? '' : `<b class="who">${esc(m.name)}</b>`}${esc(m.text)}<small>${m.at ? dayLabel(toDate(m.at)) + ', ' + timeOf(toDate(m.at)) : 'Sending…'}</small></div>`).join('') || '<p class="muted" style="text-align:center;margin:auto;font-size:13px">Start the team chat. Set up your next run.</p>'}</div><form class="compose" id="tc"><input id="tci" maxlength="1000" placeholder="Message ${esc(t.name)}…" aria-label="Team message" autocomplete="off"><button class="btn btn-primary btn-sm">Send</button></form></section>` : `<div class="empty" style="margin-top:20px">Team chat is for members. ${req ? 'Your request is waiting for the captain.' : 'Ask to join to chat with the team.'}</div>`}
-  </div><aside class="rail" style="display:flex">${teamSide(t, games)}</aside>${window.innerWidth < 960 ? `<div style="display:grid;gap:18px">${teamSide(t, games)}</div>` : ''}</div>`;
+  </div><aside class="rail">${teamSide(t, games)}</aside>${window.innerWidth < 960 ? `<div style="display:grid;gap:18px">${teamSide(t, games)}</div>` : ''}</div>`;
 }
 function teamSide(t, games) {
   const cap = t.captainUid === S.uid;
-  return `<section class="card"><div class="label">Roster · ${t.members.length}/15</div>${t.members.map(u => `<div class="team-row">${avatar(nameOf(u))}<div style="min-width:0"><button onclick="openProfile('${u}')"><strong>${esc(nameOf(u))}</strong></button><small>${u === t.captainUid ? 'Captain' : 'Player'}</small></div>${cap && u !== S.uid ? `<button class="btn btn-sm btn-ghost" onclick="removeMember('${u}')">Remove</button>` : '<span></span>'}</div>`).join('')}</section><section class="card"><div class="label">Team games</div>${games.map(g => `<div class="team-row ${sportCls(g.sport)}"><span class="fmt" style="font-size:20px">${esc(g.format)}</span><div style="min-width:0"><strong>${esc(gameTitle(g))}</strong><small>${dayLabel(toDate(g.when))} · ${g.status === 'final' ? 'Final ' + g.final.home + '–' + g.final.away : esc(g.venue)}</small></div><button class="btn btn-ghost btn-sm" onclick="openGame('${g.id}')">View</button></div>`).join('') || '<p class="muted" style="font-size:13px;margin-top:8px">No team games yet.</p>'}</section>`;
+  return `${t.youth ? kidsHTML(t) : ''}<section class="card"><div class="label">${t.youth ? 'Coaches' : 'Roster'} · ${t.members.length}/15</div>${t.members.map(u => `<div class="team-row">${avatar(nameOf(u))}<div style="min-width:0"><button onclick="openProfile('${u}')"><strong>${esc(nameOf(u))}</strong></button><small>${u === t.captainUid ? 'Captain' : 'Player'}</small></div>${cap && u !== S.uid ? `<button class="btn btn-sm btn-ghost" onclick="removeMember('${u}')">Remove</button>` : '<span></span>'}</div>`).join('')}</section><section class="card"><div class="label">Team games</div>${games.map(g => `<div class="team-row ${sportCls(g.sport)}"><span class="fmt" style="font-size:20px">${esc(g.format)}</span><div style="min-width:0"><strong>${esc(gameTitle(g))}</strong><small>${dayLabel(toDate(g.when))} · ${g.status === 'final' ? 'Final ' + g.final.home + '–' + g.final.away : esc(g.venue)}</small></div><button class="btn btn-ghost btn-sm" onclick="openGame('${g.id}')">View</button></div>`).join('') || '<p class="muted" style="font-size:13px;margin-top:8px">No team games yet.</p>'}</section>`;
 }
 async function requestJoin() { const t = S.teamCache[S.team]; try { await setDoc(doc(db, 'teams', t.id, 'requests', S.uid), { name: myName(), at: serverTimestamp() }); S.myReq[t.id] = true; render(); toast('Request sent to the captain.') } catch (e) { console.error(e); toast('Couldn’t send the request.') } }
 async function cancelRequest() { const t = S.teamCache[S.team]; try { await deleteDoc(doc(db, 'teams', t.id, 'requests', S.uid)); S.myReq[t.id] = false; render() } catch (e) { console.error(e) } }
@@ -888,11 +1116,17 @@ function playerCard(p, buttons) {
 function resultRow(g) { const sd = sideOf(g), f = g.final, won = f.winner === sd; return `<button class="result" style="width:100%;text-align:left" onclick="openGame('${g.id}')"><span class="wl ${f.winner ? (won ? 'w' : 'l') : 'l'}">${f.winner ? (won ? 'W' : 'L') : 'D'}</span><div style="min-width:0"><strong>${f[sd]}–${f[other(sd)]} vs ${esc(sideName(g, other(sd)))}</strong><small>${esc(g.format)} · You scored ${scoredBy(g, S.uid, sd)} · +${earnedBy(g, S.uid, sd)} pts</small></div><span class="mono muted" style="font-size:12px">${toDate(g.when).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span></button>` }
 function mePage() {
   const myPosts = visiblePosts(S.posts.filter(p => p.uid === S.uid)), upcoming = S.myGames.filter(g => g.status === 'open' && toDate(g.when) >= startOfDay()).sort((a, b) => toDate(a.when) - toDate(b.when)), done = S.myGames.filter(g => g.status === 'final');
-  return `<div class="cols two"><div style="min-width:0">${playerCard({ ...S.me, id: S.uid }, `<button class="btn btn-primary btn-sm" onclick="editMe()">Edit profile</button><button class="btn btn-ghost btn-sm" onclick="share()">Invite friends</button>`)}<div class="sec"><h2>Your games</h2></div><div class="games">${upcoming.map(gameRow).join('') || '<div class="empty">You haven’t joined any upcoming games.</div>'}</div><div class="sec"><h2>Results</h2></div><section class="card">${done.map(resultRow).join('') || '<p class="muted" style="font-size:13px">Confirmed results show up here.</p>'}</section><div class="sec"><h2>Your posts</h2><button class="link" onclick="newPost('Highlight')">＋ New</button></div>${myPosts.map(postCard).join('') || '<div class="empty">Share your first highlight.</div>'}</div><aside class="rail" style="display:flex">${meSide()}</aside>${window.innerWidth < 960 ? `<div style="display:grid;gap:18px">${meSide()}</div>` : ''}</div>`;
+  return `<div class="cols two"><div style="min-width:0">${playerCard({ ...S.me, id: S.uid }, `<button class="btn btn-primary btn-sm" onclick="editMe()">Edit profile</button><button class="btn btn-ghost btn-sm" onclick="share()">Invite friends</button>`)}<div class="sec"><h2>Your games</h2></div><div class="games">${upcoming.map(gameRow).join('') || '<div class="empty">You haven’t joined any upcoming games.</div>'}</div><div class="sec"><h2>Results</h2></div><section class="card">${done.map(resultRow).join('') || '<p class="muted" style="font-size:13px">Confirmed results show up here.</p>'}</section><div class="sec"><h2>Your posts</h2><button class="link" onclick="newPost('Highlight')">＋ New</button></div>${myPosts.map(postCard).join('') || '<div class="empty">Share your first highlight.</div>'}</div><aside class="rail">${meSide()}</aside>${window.innerWidth < 960 ? `<div style="display:grid;gap:18px">${meSide()}</div>` : ''}</div>`;
+}
+const teamLoads = new Set();
+function teamName(tid) { const t = S.teamCache[tid] || S.myTeams.find(x => x.id === tid); if (!t && !teamLoads.has(tid)) { teamLoads.add(tid); getDoc(doc(db, 'teams', tid)).then(d => { if (d.exists()) { S.teamCache[tid] = { id: tid, ...d.data() }; renderSoon() } }).catch(() => { }) } return t?.name || 'Team' }
+function myKidsCard() {
+  if (!S.myKids.length) return '';
+  return `<section class="card"><div class="label">My kids</div>${S.myKids.map(k => `<div class="team-row"><span class="jersey">${esc(k.jersey || '—')}</span><div style="min-width:0"><strong>${esc(k.name)}</strong><small>${esc(teamName(k.teamId))} · ${k.status === 'approved' ? 'On the roster' : 'Waiting for coach'}</small></div><button class="btn btn-ghost btn-sm" onclick="openTeam('${k.teamId}')">Team</button></div>`).join('')}<p class="muted youth-note">Their season points show in each season’s leaders, visible to you and their coaches.</p></section>`;
 }
 function meSide() {
   const pushOn = pushSupported() && Notification.permission === 'granted' && ls.get('pushToken', '');
-  return `<section class="card"><div class="label">Your teams</div>${S.myTeams.map(t => `<div class="team-row ${sportCls(t.sport)}">${avatar(t.name)}<div style="min-width:0"><strong>${esc(t.name)}</strong><small>${t.captainUid === S.uid ? 'Captain' : 'Player'} · ${t.members.length} players</small></div><button class="btn btn-ghost btn-sm" onclick="openTeam('${t.id}')">Open</button></div>`).join('') || '<p class="muted" style="font-size:13px;margin-top:8px">No team yet.</p>'}<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:10px" onclick="go('play',{play:'teams'})">Find or create a team</button></section><section class="card"><div class="label">Settings</div><div class="setrow" style="margin-top:6px"><div><strong>Signed in as</strong><small>${esc(auth.currentUser?.email || 'Google or Apple account')}</small></div></div>${FEATURES.pushKey ? `<div class="setrow"><div><strong>Notifications on this device</strong><small>${pushOn ? 'On: reminders, scores and messages' : 'Game reminders, scores and messages'}</small></div>${pushOn ? '<span class="label">On</span>' : '<button class="btn btn-ghost btn-sm" onclick="enablePush()">Turn on</button>'}</div>` : ''}<div class="setrow"><div><strong>Blocked players</strong><small>${S.blocked.size ? [...S.blocked].map(u => esc(nameOf(u))).join(', ') : 'No one'}</small></div>${S.blocked.size ? '<button class="btn btn-ghost btn-sm" onclick="manageBlocked()">Manage</button>' : ''}</div><div class="setrow"><div><strong>Sign out</strong><small>You can sign back in any time</small></div><button class="btn btn-ghost btn-sm" onclick="doSignOut()">Sign out</button></div></section>`;
+  return `${myKidsCard()}<section class="card"><div class="label">Your teams</div>${S.myTeams.map(t => `<div class="team-row ${sportCls(t.sport)}">${avatar(t.name)}<div style="min-width:0"><strong>${esc(t.name)}</strong><small>${t.captainUid === S.uid ? 'Captain' : 'Player'} · ${t.members.length} players</small></div><button class="btn btn-ghost btn-sm" onclick="openTeam('${t.id}')">Open</button></div>`).join('') || '<p class="muted" style="font-size:13px;margin-top:8px">No team yet.</p>'}<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:10px" onclick="go('play',{play:'teams'})">Find or create a team</button></section><section class="card"><div class="label">Settings</div><div class="setrow" style="margin-top:6px"><div><strong>Signed in as</strong><small>${esc(auth.currentUser?.email || 'Google or Apple account')}</small></div></div>${FEATURES.pushKey ? `<div class="setrow"><div><strong>Notifications on this device</strong><small>${pushOn ? 'On: reminders, scores and messages' : 'Game reminders, scores and messages'}</small></div>${pushOn ? '<span class="label">On</span>' : '<button class="btn btn-ghost btn-sm" onclick="enablePush()">Turn on</button>'}</div>` : ''}<div class="setrow"><div><strong>Blocked players</strong><small>${S.blocked.size ? [...S.blocked].map(u => esc(nameOf(u))).join(', ') : 'No one'}</small></div>${S.blocked.size ? '<button class="btn btn-ghost btn-sm" onclick="manageBlocked()">Manage</button>' : ''}</div><div class="setrow"><div><strong>Sign out</strong><small>You can sign back in any time</small></div><button class="btn btn-ghost btn-sm" onclick="doSignOut()">Sign out</button></div></section>`;
 }
 function manageBlocked() { ensureUsers([...S.blocked]); sheet(`<h2>Blocked players</h2>${[...S.blocked].map(u => `<div class="team-row">${avatar(nameOf(u))}<div><strong>${esc(nameOf(u))}</strong></div><button class="btn btn-ghost btn-sm" onclick="unblock('${u}')">Unblock</button></div>`).join('') || '<p class="muted">No one.</p>'}<div class="actions"><button class="btn btn-ghost" onclick="closeSheet()">Done</button></div>`) }
 function editMe() {
@@ -1004,4 +1238,4 @@ $('#citybtn').onclick = () => openCityPicker();
 let wide = window.innerWidth >= 960; window.addEventListener('resize', () => { if (wide !== (window.innerWidth >= 960)) { wide = !wide; render() } });
 
 // Inline onclick handlers in the templates call these.
-Object.assign(window, { go, render, S, routeTo, setCity, pickScorer, cancelPick, openCreate, openGame, joinGame, leaveGame, cancelGame, postGame, respond, newPost, doWorkout, like, deletePost, share, openComments, delComment, follow, openReels, closeOverlay, editMe, doSignOut, openProfile, openThread, startGame, clockToggle, addPts, undoPts, nextPer, finish, closeSB, reopenSB, submitFromSB, closeSheet, interest, createTeam, openTeam, requestJoin, cancelRequest, approve, decline, removeMember, leaveTeam, renameTeam, shareTeam, openNotifs, clearNotifs, enablePush, moreMenu, reportSheet, blockSheet, unblock, manageBlocked });
+Object.assign(window, { createLeague, openLeague, enterLeague, approveEntry, declineEntry, shareLeague, addKid, approveKid, removeKid, go, render, S, routeTo, setCity, pickScorer, cancelPick, openCreate, openGame, joinGame, leaveGame, cancelGame, postGame, respond, newPost, doWorkout, like, deletePost, share, openComments, delComment, follow, openReels, closeOverlay, editMe, doSignOut, openProfile, openThread, startGame, clockToggle, addPts, undoPts, nextPer, finish, closeSB, reopenSB, submitFromSB, closeSheet, interest, createTeam, openTeam, requestJoin, cancelRequest, approve, decline, removeMember, leaveTeam, renameTeam, shareTeam, openNotifs, clearNotifs, enablePush, moreMenu, reportSheet, blockSheet, unblock, manageBlocked });

@@ -84,10 +84,17 @@ async function awardResult(ref) {
     const teamRefs = ['home', 'away'].map(s => g[s + 'TeamId'] ? db().doc(`teams/${g[s + 'TeamId']}`) : null);
     const users = await Promise.all(userRefs.map(r => tx.get(r)));
     const teams = await Promise.all(teamRefs.map(r => r ? tx.get(r) : null));
+    // Season or tournament game: read the league, and for youth games the kids on both rosters.
+    const leagueSnap = g.leagueId ? await tx.get(db().doc(`leagues/${g.leagueId}`)) : null;
+    const L = leagueSnap?.exists && [g.homeTeamId, g.awayTeamId].every(t => leagueSnap.data().teamIds.includes(t)) ? leagueSnap.data() : null;
+    const youth = L?.division === 'youth';
+    const kidPts = youth ? Object.entries({ ...(g.report.kids || {}), ...(g.confirmKids || {}) }).filter(([k, v]) => /^[A-Za-z0-9_-]{1,40}$/.test(k) && Number.isInteger(v) && v >= 0 && v <= 999).slice(0, 160) : [];
+    const kidSnaps = [];
+    for (const [kid] of kidPts) for (const side of ['home', 'away']) kidSnaps.push({ kid, side, snap: await tx.get(db().doc(`teams/${g[side + 'TeamId']}/kids/${kid}`)) });
     const season = seasonKey(g.when.toDate());
     const record = side => winner ? { [winner === side ? 'wins' : 'losses']: FieldValue.increment(1) } : {};
     users.forEach(u => {
-      const p = players[u.id]; if (!u.exists || !p) return;
+      const p = players[u.id]; if (!u.exists || !p || youth) return; // coaches don't earn points from youth games
       // Season totals restart when a game lands in a new season.
       const d = u.data(), fresh = d.seasonKey !== season, won = winner === p.side, lost = winner && !won;
       const seasonal = fresh ? { seasonKey: season, seasonRp: p.earned, seasonWins: won ? 1 : 0, seasonLosses: lost ? 1 : 0 }
@@ -95,9 +102,29 @@ async function awardResult(ref) {
       tx.update(u.ref, { rp: FieldValue.increment(p.earned), ...(p.counted ? { scored: FieldValue.increment(p.scored) } : {}), ...record(p.side), ...seasonal });
     });
     teams.forEach((t, i) => { const side = i === 0 ? 'home' : 'away'; if (t?.exists) tx.update(t.ref, { rp: FieldValue.increment(earned[side]), ...record(side) }) });
-    const final = { home: hs, away: as, winner, pts: winner ? WIN_POINTS : 0, earned, players: Object.fromEntries(Object.entries(players).map(([u, p]) => [u, { scored: p.scored, earned: p.earned }])) };
+    if (L) {
+      const inc = n => FieldValue.increment(n), wl = side => winner ? { [winner === side ? 'wins' : 'losses']: inc(1) } : { ties: inc(1) };
+      const score = { home: hs, away: as };
+      for (const side of ['home', 'away']) {
+        const other = side === 'home' ? 'away' : 'home';
+        tx.set(db().doc(`leagues/${g.leagueId}/standings/${g[side + 'TeamId']}`), { name: g[side + 'TeamName'] || 'Team', games: inc(1), pf: inc(score[side]), pa: inc(score[other]), ...wl(side) }, { merge: true });
+      }
+      const statRow = (name, side, scored, counted, extra) => ({ name, teamId: g[side + 'TeamId'], teamName: g[side + 'TeamName'] || '', rp: inc(earnedFor(scored, winner === side)), ...(counted ? { scored: inc(scored) } : {}), games: inc(1), ...(winner ? { [winner === side ? 'wins' : 'losses']: inc(1) } : {}), ...extra });
+      if (youth) {
+        const done = new Set();
+        for (const { kid, side, snap } of kidSnaps) {
+          if (done.has(kid) || !snap.exists || snap.data().status !== 'approved') continue;
+          done.add(kid);
+          const pts = Object.fromEntries(kidPts)[kid];
+          tx.set(db().doc(`leagues/${g.leagueId}/stats/kid_${kid}`), statRow(snap.data().name, side, pts, true, { youth: true, parentUid: snap.data().parentUid, jersey: snap.data().jersey || '' }), { merge: true });
+        }
+      } else {
+        users.forEach(u => { const p = players[u.id]; if (u.exists && p) tx.set(db().doc(`leagues/${g.leagueId}/stats/${u.id}`), statRow(u.data().name, p.side, p.scored, p.counted, { youth: false }), { merge: true }) });
+      }
+    }
+    const final = { home: hs, away: as, winner, pts: winner ? WIN_POINTS : 0, earned, players: youth ? {} : Object.fromEntries(Object.entries(players).map(([u, p]) => [u, { scored: p.scored, earned: p.earned }])), ...(youth ? { youth: true } : {}) };
     tx.update(ref, { status: 'final', awarded: true, final, finalAt: FieldValue.serverTimestamp() });
-    return { winner, earned, players };
+    return { winner, earned, players: youth ? {} : players, youth, league: L?.name || '' };
   });
 }
 
@@ -118,12 +145,30 @@ async function onGameUpdated(before, after, ref) {
     const res = await awardResult(ref);
     if (res) {
       const score = `${g.report.home}–${g.report.away}`;
+      if (res.youth) await notify(g.players, { type: 'final', title: `Final: ${score}`, body: `${res.winner ? sideName(g, res.winner) + ' won.' : 'A draw.'} ${res.league} standings and kid stats are updated.`, link });
       for (const [u, p] of Object.entries(res.players)) {
         const head = res.winner ? `${sideName(g, res.winner)} won ${score}.` : `A ${score} draw.`;
         await notify([u], { type: 'final', title: `Final: ${score}`, body: `${head} You earned ${p.earned} player points (${res.winner === p.side ? `${WIN_POINTS} for the win + ` : ''}${p.scored} you scored).`, link });
       }
     }
   }
+}
+
+// Seasons and tournaments
+async function onLeagueEntry(lid, teamId, e) {
+  const l = await db().doc(`leagues/${lid}`).get(); if (!l.exists) return;
+  await notify([l.data().organizerUid], { type: 'team', title: `${e.teamName} wants to enter ${l.data().name}`, body: `${e.captainName} asked. Open the ${l.data().type} to approve.`, link: `league/${lid}` });
+}
+async function onLeagueUpdated(lid, before, after) {
+  const added = (after.teamIds || []).filter(t => !(before.teamIds || []).includes(t));
+  for (const t of added) {
+    const team = await db().doc(`teams/${t}`).get(); if (!team.exists) continue;
+    await notify(team.data().members, { type: 'team', title: `${team.data().name} is in ${after.name}`, body: `The organizer approved your team. Check the schedule and standings.`, link: `league/${lid}` });
+  }
+}
+async function onKidAdded(tid, kidId, k) {
+  const t = await db().doc(`teams/${tid}`).get(); if (!t.exists) return;
+  await notify([t.data().captainUid], { type: 'team', title: `${k.parentName} added ${k.name} to ${t.data().name}`, body: 'Open the team to approve the player.', link: `team/${tid}` });
 }
 
 async function onDirectMessage(cid, m) {
@@ -166,4 +211,4 @@ async function sendReminders(now = new Date()) {
   return sent;
 }
 
-module.exports = { WIN_POINTS, earnedFor, splitResult, seasonKey, awardResult, onGameUpdated, onDirectMessage, onTeamMessage, onTeamRequest, onReport, sendReminders, notify };
+module.exports = { onLeagueEntry, onLeagueUpdated, onKidAdded, WIN_POINTS, earnedFor, splitResult, seasonKey, awardResult, onGameUpdated, onDirectMessage, onTeamMessage, onTeamRequest, onReport, sendReminders, notify };

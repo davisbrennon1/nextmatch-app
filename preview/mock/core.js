@@ -56,24 +56,26 @@ function write(path, data, { silent = false } = {}) {
 }
 export const getFirestore = () => ({ type: 'firestore' });
 export const connectFirestoreEmulator = () => { };
-const docRef = path => ({ type: 'doc', path, id: path.split('/').pop() });
-const colRef = path => ({ type: 'collection', path, id: path.split('/').pop() });
+const parentOf = path => path.split('/').slice(0, -1).join('/');
+const docRef = path => ({ type: 'doc', path, id: path.split('/').pop(), get parent() { return colRef(parentOf(path)) } });
+const colRef = path => ({ type: 'collection', path, id: path.split('/').pop(), get parent() { return path.includes('/') ? docRef(parentOf(path)) : null } });
 export function doc(base, ...segs) {
   if (base?.type === 'collection') return docRef(base.path + '/' + (segs[0] ?? autoId()));
   return docRef(segs.join('/'));
 }
+export const collectionGroup = (_, id) => ({ type: 'group', id });
 export function collection(base, ...segs) { return colRef((base?.type === 'doc' ? base.path + '/' : '') + segs.join('/')) }
 export const where = (f, op, v) => ({ kind: 'where', f, op, v });
 export const orderBy = (f, dir = 'asc') => ({ kind: 'order', f, dir });
 export const limit = n => ({ kind: 'limit', n });
-export const query = (col, ...cons) => ({ type: 'query', path: col.path, cons });
+export const query = (col, ...cons) => ({ type: 'query', path: col.path, src: col, cons });
 const val = v => v instanceof Timestamp ? v.toMillis() : v;
 const field = (d, f) => f.split('.').reduce((o, k) => o?.[k], d);
 function cmp(a, b) { a = val(a); b = val(b); if (a == null) return b == null ? 0 : -1; if (b == null) return 1; return a < b ? -1 : a > b ? 1 : 0 }
 function run(target) {
   if (target.type === 'doc') return snapDoc(target.path);
-  const prefix = target.path + '/', depth = prefix.split('/').length;
-  let rows = [...docs.keys()].filter(p => p.startsWith(prefix) && p.split('/').length === depth).map(p => ({ path: p, data: docs.get(p) }));
+  const src = target.type === 'group' ? target : target.src || target, prefix = (src.path || '') + '/', depth = prefix.split('/').length;
+  let rows = [...docs.keys()].filter(p => src.type === 'group' ? (p.split('/').length % 2 === 0 && p.split('/').at(-2) === src.id) : (p.startsWith(prefix) && p.split('/').length === depth)).map(p => ({ path: p, data: docs.get(p) }));
   for (const c of target.cons || []) {
     if (c.kind !== 'where') continue;
     rows = rows.filter(({ data }) => {
@@ -87,6 +89,7 @@ function run(target) {
         case '<': return x != null && cmp(x, c.v) < 0;
         case 'array-contains': return Array.isArray(x) && x.includes(c.v);
         case 'in': return c.v.includes(x);
+        case 'array-contains-any': return Array.isArray(x) && x.some(v => c.v.includes(v));
         default: return true;
       }
     });
@@ -106,7 +109,7 @@ export function onSnapshot(target, next, error) {
   return () => listeners.delete(l);
 }
 export const getDoc = async ref => snapDoc(ref.path);
-export const getDocs = async q => run(q.type === 'collection' ? { ...q, cons: [] } : q);
+export const getDocs = async q => run(q.type === 'collection' || q.type === 'group' ? { ...q, cons: [] } : q);
 export async function setDoc(ref, data, opts = {}) { const before = docs.get(ref.path); write(ref.path, opts.merge && before ? merge(before, data) : merge({}, data)) }
 export async function updateDoc(ref, data) {
   const before = docs.get(ref.path); if (!before) throw err('not-found', 'No document to update.');
@@ -169,17 +172,30 @@ function seasonKey(d) { const m = d.getMonth(), y = d.getFullYear(); return m ==
 function award(path) {
   const g = get(path); if (!g || g.status !== 'confirmed' || g.awarded) return null;
   const { winner, players, earned } = splitResult(g);
+  const L0 = g.leagueId && get('leagues/' + g.leagueId), L = L0 && [g.homeTeamId, g.awayTeamId].every(t => L0.teamIds.includes(t)) ? L0 : null, youth = L?.division === 'youth';
   const record = (d, side) => winner ? (winner === side ? { wins: (d.wins || 0) + 1 } : { losses: (d.losses || 0) + 1 }) : {};
   const season = seasonKey(g.when.toDate());
-  Object.entries(players).forEach(([u, p]) => {
+  if (!youth) Object.entries(players).forEach(([u, p]) => {
     const d = get('users/' + u); if (!d) return;
     const fresh = d.seasonKey !== season, won = winner === p.side, lost = !!winner && !won;
     put('users/' + u, { ...d, rp: (d.rp || 0) + p.earned, scored: (d.scored || 0) + (p.counted ? p.scored : 0), ...record(d, p.side), seasonKey: season,
       seasonRp: (fresh ? 0 : d.seasonRp || 0) + p.earned, seasonWins: (fresh ? 0 : d.seasonWins || 0) + (won ? 1 : 0), seasonLosses: (fresh ? 0 : d.seasonLosses || 0) + (lost ? 1 : 0) });
   });
   ['home', 'away'].forEach(side => { const id = g[side + 'TeamId'], t = id && get('teams/' + id); if (t) put('teams/' + id, { ...t, rp: (t.rp || 0) + earned[side], ...record(t, side) }) });
-  put(path, { ...g, status: 'final', awarded: true, final: { home: g.report.home, away: g.report.away, winner, pts: winner ? WIN_POINTS : 0, earned, players: Object.fromEntries(Object.entries(players).map(([u, p]) => [u, { scored: p.scored, earned: p.earned }])) }, finalAt: Timestamp.now() });
-  return { winner, earned, players };
+  if (L) {
+    const sc = { home: g.report.home, away: g.report.away }, add = (o, k, n) => (o[k] || 0) + n;
+    for (const side of ['home', 'away']) {
+      const other = side === 'home' ? 'away' : 'home', p = `leagues/${g.leagueId}/standings/${g[side + 'TeamId']}`, d = get(p) || {};
+      put(p, { ...d, name: g[side + 'TeamName'] || 'Team', games: add(d, 'games', 1), pf: add(d, 'pf', sc[side]), pa: add(d, 'pa', sc[other]), ...(winner ? (winner === side ? { wins: add(d, 'wins', 1) } : { losses: add(d, 'losses', 1) }) : { ties: add(d, 'ties', 1) }) });
+    }
+    const stat = (key, name, side, scored, counted, extra) => { const p = `leagues/${g.leagueId}/stats/${key}`, d = get(p) || {}; put(p, { ...d, name, teamId: g[side + 'TeamId'], teamName: g[side + 'TeamName'] || '', rp: add(d, 'rp', earnedFor(scored, winner === side)), scored: add(d, 'scored', counted ? scored : 0), games: add(d, 'games', 1), ...(winner ? (winner === side ? { wins: add(d, 'wins', 1) } : { losses: add(d, 'losses', 1) }) : {}), ...extra }) };
+    if (youth) {
+      const pts = { ...(g.report.kids || {}), ...(g.confirmKids || {}) };
+      for (const [kid, v] of Object.entries(pts)) for (const side of ['home', 'away']) { const k = get(`teams/${g[side + 'TeamId']}/kids/${kid}`); if (k && k.status === 'approved' && Number.isInteger(v)) { stat('kid_' + kid, k.name, side, v, true, { youth: true, parentUid: k.parentUid, jersey: k.jersey || '' }); break } }
+    } else Object.entries(players).forEach(([u, p]) => stat(u, nameOf(u), p.side, p.scored, p.counted, { youth: false }));
+  }
+  put(path, { ...g, status: 'final', awarded: true, final: { home: g.report.home, away: g.report.away, winner, pts: winner ? WIN_POINTS : 0, earned, players: youth ? {} : Object.fromEntries(Object.entries(players).map(([u, p]) => [u, { scored: p.scored, earned: p.earned }])), ...(youth ? { youth: true } : {}) }, finalAt: Timestamp.now() });
+  return { winner, earned, players: youth ? {} : players, youth, league: L?.name || '' };
 }
 const BOTS = new Set(['marcus', 'devin', 'chris', 'tyler', 'andre', 'riley', 'sam', 'kendra', 'jaylen', 'omar', 'lucia']);
 const human = () => auth.currentUser?.uid;
@@ -189,6 +205,23 @@ function trigger(path, before, after) {
   if (seg[0] === 'games' && seg.length === 2 && before && after) gameChanged(path, before, after);
   if (seg[0] === 'teams' && seg[2] === 'requests' && seg.length === 4 && !before && after) joinRequested(seg[1], seg[3], after);
   if (seg[0] === 'conversations' && seg[2] === 'messages' && !before && after) messageSent(seg[1], after);
+  if (seg[0] === 'leagues' && seg[2] === 'entries' && seg.length === 4 && !before && after) leagueEntry(seg[1], seg[3], after);
+  if (seg[0] === 'leagues' && seg.length === 2 && before && after) (after.teamIds || []).filter(t => !(before.teamIds || []).includes(t)).forEach(t => { const tm = get('teams/' + t); if (tm) notify(tm.members, { type: 'team', title: `${tm.name} is in ${after.name}`, body: 'The organizer approved your team. Check the schedule and standings.', link: 'league/' + seg[1] }) });
+  if (seg[0] === 'teams' && seg[2] === 'kids' && seg.length === 4 && !before && after) kidAdded(seg[1], seg[3], after);
+}
+function leagueEntry(lid, tid, e) {
+  const l = get('leagues/' + lid); if (!l) return;
+  notify([l.organizerUid], { type: 'team', title: `${e.teamName} wants to enter ${l.name}`, body: `${e.captainName} asked. Open the ${l.type} to approve.`, link: 'league/' + lid });
+  if (BOTS.has(l.organizerUid) && l.organizerUid !== human()) later(2500, () => {
+    const now = get('leagues/' + lid), t = get('teams/' + tid); if (!now || !t || now.teamIds.includes(tid)) return;
+    put('leagues/' + lid, { ...now, teamIds: [...now.teamIds, tid], teamNames: { ...now.teamNames, [tid]: e.teamName }, staff: [...new Set([...now.staff, t.captainUid])], lastChange: tid });
+    trigger('leagues/' + lid, now, get('leagues/' + lid));
+  });
+}
+function kidAdded(tid, kid, k) {
+  const t = get('teams/' + tid); if (!t) return;
+  notify([t.captainUid], { type: 'team', title: `${k.parentName} added ${k.name} to ${t.name}`, body: 'Open the team to approve the player.', link: 'team/' + tid });
+  if (BOTS.has(t.captainUid) && t.captainUid !== human()) later(2500, () => { const d = get(`teams/${tid}/kids/${kid}`); if (d) put(`teams/${tid}/kids/${kid}`, { ...d, status: 'approved' }) });
 }
 function gameChanged(path, b, g) {
   const id = path.split('/')[1], link = 'game/' + id, title = `${g.format} at ${g.venue}`;
@@ -197,11 +230,19 @@ function gameChanged(path, b, g) {
     const r = g.report, other = r.side === 'home' ? g.away : g.home;
     notify(other, { type: 'confirm', title: 'Confirm the final score', body: `${nameOf(r.by)} reported ${sideName(g, 'home')} ${r.home}, ${sideName(g, 'away')} ${r.away}. Confirm it or dispute it.`, link });
     const bot = other.find(u => BOTS.has(u) && u !== human());
-    if (r.by === human() && bot) later(2500, () => { const now = get(path); if (now?.status === 'reported') updateDoc(docRef(path), { status: 'confirmed', responseBy: bot }) });
+    if (r.by === human() && bot) later(2500, () => {
+      const now = get(path); if (now?.status !== 'reported') return;
+      // A sample coach adds their own kids' points, split to add up to their team's score.
+      const botSide = r.side === 'home' ? 'away' : 'home', tid = now[botSide + 'TeamId'], kids = tid ? [...docs.keys()].filter(p => p.startsWith(`teams/${tid}/kids/`) && docs.get(p).status === 'approved').map(p => p.split('/').pop()) : [];
+      let left = now.report[botSide]; const confirmKids = {};
+      kids.forEach((k, i) => { const v = i === kids.length - 1 ? left : Math.floor(left * (0.5 - i * 0.1)); confirmKids[k] = Math.max(0, v); left -= Math.max(0, v) });
+      updateDoc(docRef(path), { status: 'confirmed', responseBy: bot, ...(kids.length && now.leagueId ? { confirmKids } : {}) });
+    });
   }
   if (b.status === 'reported' && g.status === 'disputed') notify(g.players, { type: 'disputed', title: 'Score disputed', body: `${nameOf(g.responseBy)} disputed the score for ${title}. Talk it out, then report it again.`, link });
   if (b.status !== 'confirmed' && g.status === 'confirmed') {
     const res = award(path);
+    if (res?.youth) notify(g.players, { type: 'final', title: `Final: ${g.report.home}–${g.report.away}`, body: `${res.winner ? sideName(g, res.winner) + ' won.' : 'A draw.'} ${res.league} standings and kid stats are updated.`, link });
     if (res) Object.entries(res.players).forEach(([u, p]) => { const sc = `${g.report.home}–${g.report.away}`; notify([u], { type: 'final', title: `Final: ${sc}`, body: `${res.winner ? `${sideName(g, res.winner)} won ${sc}.` : `A ${sc} draw.`} You earned ${p.earned} player points (${res.winner === p.side ? `${WIN_POINTS} for the win + ` : ''}${p.scored} you scored).`, link }) });
   }
 }
@@ -336,6 +377,36 @@ function seed() {
   n('n2', 'team', 'Chris Evans wants to join Eastside Buckets', 'Open the team to approve or decline.', 'team/eastside', false, 3 * H);
   n('n3', 'final', 'Final: 15–21', 'Marcus Williams won 15–21. You earned 15 player points (15 you scored).', 'game/lostmarcus', true, 5 * D);
   ['marcus', 'riley'].forEach(u => put(`users/you/following/${u}`, { at: ts(now - 10 * D) }));
+  // ── Seasons and tournaments ──
+  team('swish', 'South Austin Swish', 'Basketball', 'chris', ['chris'], 620, 4, 7);
+  const yteam = (id, name, sport, age, coach, members) => put('teams/' + id, { name, sport, city: 'Austin, TX', captainUid: coach, members, rp: 0, wins: 0, losses: 0, youth: true, ageGroup: age, createdAt: ts(now - 25 * D) });
+  yteam('eagles12', 'Eastside Eagles 12U', 'Football', '12U', 'you', ['you', 'tyler']);
+  yteam('panthers12', 'North Austin Panthers 12U', 'Football', '12U', 'marcus', ['marcus']);
+  yteam('hawks10', 'Austin Hawks 10U', 'Basketball', '10U', 'devin', ['devin']);
+  const kid = (tid, id, name, jersey, parent, parentName, status = 'approved') => put(`teams/${tid}/kids/${id}`, { name, jersey, parentUid: parent, parentName, status, at: ts(now - 20 * D) });
+  kid('eagles12', 'k1', 'Jayden R.', '12', 'you', 'Jordan Davis'); kid('eagles12', 'k2', 'Mia T.', '7', 'tyler', 'Tyler Brooks'); kid('eagles12', 'k3', 'Noah P.', '22', 'sam', 'Sam Patel');
+  kid('eagles12', 'k4', 'Leo M.', '5', 'chris', 'Chris Evans', 'pending');
+  kid('panthers12', 'k5', 'Ava S.', '3', 'marcus', 'Marcus Williams'); kid('panthers12', 'k6', 'Eli W.', '18', 'devin', 'Devin Carter'); kid('panthers12', 'k7', 'Zoe K.', '9', 'riley', 'Riley Ortiz');
+  kid('hawks10', 'k8', 'Max D.', '4', 'you', 'Jordan Davis');
+  const lg = (id, l) => put('leagues/' + id, { description: '', city: 'Austin, TX', createdAt: ts(now - 30 * D), ...l });
+  lg('fallhoops', { type: 'season', division: 'adult', sport: 'Basketball', format: '5v5', name: 'ATX Fall Hoops League', description: 'Tuesday and Thursday nights at Pan Am. 8-game regular season, top 2 play for the title.', start: ts(now - 40 * D), end: ts(now + 25 * D), organizerUid: 'marcus', organizerName: 'Marcus Williams', teamIds: ['eastside', 'northloop', 'swish'], teamNames: { eastside: 'Eastside Buckets', northloop: 'North Loop Ballers', swish: 'South Austin Swish' }, staff: ['marcus', 'you', 'chris'] });
+  lg('winter7v7', { type: 'tournament', division: 'adult', sport: 'Flag football', format: '7v7', name: 'Austin 7v7 Winter Classic', description: 'One-day tournament at Zilker. Pool play, then single elimination.', start: ts(now + 9 * D), end: ts(now + 10 * D), organizerUid: 'riley', organizerName: 'Riley Ortiz', teamIds: ['outlaws'], teamNames: { outlaws: 'ATX Outlaws' }, staff: ['riley'] });
+  lg('youthfb12', { type: 'season', division: 'youth', ageGroup: '12U', sport: 'Football', format: '11v11', name: 'Austin Youth Football 12U', description: 'Saturday mornings at House Park. Coaches confirm every score.', start: ts(now - 30 * D), end: ts(now + 30 * D), organizerUid: 'riley', organizerName: 'Riley Ortiz', teamIds: ['eagles12', 'panthers12'], teamNames: { eagles12: 'Eastside Eagles 12U', panthers12: 'North Austin Panthers 12U' }, staff: ['riley', 'you', 'marcus'] });
+  lg('youthhoops10', { type: 'season', division: 'youth', ageGroup: '10U', sport: 'Basketball', format: '5v5', name: 'Austin Youth Hoops 10U', description: 'Sunday afternoons at Austin Rec Center.', start: ts(now + 14 * D), end: ts(now + 75 * D), organizerUid: 'devin', organizerName: 'Devin Carter', teamIds: ['hawks10'], teamNames: { hawks10: 'Austin Hawks 10U' }, staff: ['devin'] });
+  const st = (lid, tid, name, w, l, pf, pa) => put(`leagues/${lid}/standings/${tid}`, { name, wins: w, losses: l, games: w + l, pf, pa });
+  st('fallhoops', 'eastside', 'Eastside Buckets', 3, 1, 268, 241); st('fallhoops', 'northloop', 'North Loop Ballers', 3, 1, 275, 250); st('fallhoops', 'swish', 'South Austin Swish', 0, 4, 214, 266);
+  st('youthfb12', 'eagles12', 'Eastside Eagles 12U', 2, 1, 62, 48); st('youthfb12', 'panthers12', 'North Austin Panthers 12U', 1, 2, 48, 62);
+  const ls = (lid, key, name, teamId, teamName, scored, w, l, extra = {}) => put(`leagues/${lid}/stats/${key}`, { name, teamId, teamName, scored, rp: scored + w * WIN_POINTS, wins: w, losses: l, games: w + l, youth: false, ...extra });
+  ls('fallhoops', 'marcus', 'Marcus Williams', 'northloop', 'North Loop Ballers', 92, 3, 1); ls('fallhoops', 'you', 'Jordan Davis', 'eastside', 'Eastside Buckets', 71, 3, 1);
+  ls('fallhoops', 'devin', 'Devin Carter', 'northloop', 'North Loop Ballers', 66, 3, 1); ls('fallhoops', 'tyler', 'Tyler Brooks', 'eastside', 'Eastside Buckets', 58, 3, 1);
+  ls('fallhoops', 'sam', 'Sam Patel', 'eastside', 'Eastside Buckets', 40, 2, 1); ls('fallhoops', 'chris', 'Chris Evans', 'swish', 'South Austin Swish', 77, 0, 4);
+  const ks = (key, name, jersey, teamId, teamName, parent, scored, w, l) => ls('youthfb12', key, name, teamId, teamName, scored, w, l, { youth: true, parentUid: parent, jersey });
+  ks('kid_k1', 'Jayden R.', '12', 'eagles12', 'Eastside Eagles 12U', 'you', 30, 2, 1); ks('kid_k2', 'Mia T.', '7', 'eagles12', 'Eastside Eagles 12U', 'tyler', 18, 2, 1); ks('kid_k3', 'Noah P.', '22', 'eagles12', 'Eastside Eagles 12U', 'sam', 14, 2, 1);
+  ks('kid_k5', 'Ava S.', '3', 'panthers12', 'North Austin Panthers 12U', 'marcus', 26, 1, 2); ks('kid_k6', 'Eli W.', '18', 'panthers12', 'North Austin Panthers 12U', 'devin', 14, 1, 2); ks('kid_k7', 'Zoe K.', '9', 'panthers12', 'North Austin Panthers 12U', 'riley', 8, 1, 2);
+  game('fh-next', { hostUid: 'you', hostName: 'Jordan Davis', format: '5v5', need: 'Season game', venue: 'Pan American Recreation Center', when: at(4, 19), home: ['you', 'tyler', 'sam'], away: ['marcus', 'devin'], homeTeamId: 'eastside', homeTeamName: 'Eastside Buckets', awayTeamId: 'northloop', awayTeamName: 'North Loop Ballers', leagueId: 'fallhoops', leagueName: 'ATX Fall Hoops League' });
+  game('yfb-now', { sport: 'Football', hostUid: 'you', hostName: 'Jordan Davis', format: '11v11', need: 'Season game', venue: 'House Park', when: ts(now - 4 * H), home: ['you'], away: ['marcus'], homeTeamId: 'eagles12', homeTeamName: 'Eastside Eagles 12U', awayTeamId: 'panthers12', awayTeamName: 'North Austin Panthers 12U', leagueId: 'youthfb12', leagueName: 'Austin Youth Football 12U' });
+  game('yfb-last', { sport: 'Football', hostUid: 'marcus', hostName: 'Marcus Williams', format: '11v11', need: 'Season game', venue: 'House Park', when: ts(now - 7 * D), home: ['marcus'], away: ['you'], homeTeamId: 'panthers12', homeTeamName: 'North Austin Panthers 12U', awayTeamId: 'eagles12', awayTeamName: 'Eastside Eagles 12U', leagueId: 'youthfb12', leagueName: 'Austin Youth Football 12U', status: 'final', awarded: true, report: { by: 'marcus', side: 'home', home: 14, away: 21, at: ts(now - 7 * D) }, final: { home: 14, away: 21, winner: 'away', pts: 100, earned: { home: 14, away: 121 }, players: {}, youth: true } });
+  n('n4', 'team', 'Chris Evans added Leo M. to Eastside Eagles 12U', 'Open the team to approve the player.', 'team/eagles12', false, H);
   const wk = (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10) })();
   put(`users/you/workouts/${wk}_handles`, { challenge: 'handles', week: wk, fp: 75, at: ts(now - 2 * H) });
 }

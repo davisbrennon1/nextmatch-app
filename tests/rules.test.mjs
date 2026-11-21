@@ -1,11 +1,11 @@
 // Security-rule checks. Run with: npm run test:rules (needs Java for the Firebase emulator).
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, limit, getDocs, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc, collection, collectionGroup, query, where, orderBy, limit, getDocs, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch } from 'firebase/firestore';
 import fs from 'fs';
 
 const env = await initializeTestEnvironment({ projectId: 'demo-nextmatch', firestore: { rules: fs.readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8'), host: '127.0.0.1', port: 8080 } });
 const as = uid => env.authenticatedContext(uid).firestore();
-const A = as('alice'), B = as('bob'), C = as('carol'), D = as('dave'), anon = env.unauthenticatedContext().firestore();
+const A = as('alice'), B = as('bob'), C = as('carol'), D = as('dave'), E = as('erin'), anon = env.unauthenticatedContext().firestore();
 let pass = 0, failN = 0;
 async function t(name, p) { try { await p; pass++; console.log('ok  ', name) } catch (e) { failN++; console.log('FAIL', name, '-', e.message.split('\n')[0]) } }
 const user = n => ({ name: n, city: 'Austin', sports: ['Basketball'], rp: 0, wins: 0, losses: 0, adult: true, createdAt: serverTimestamp() });
@@ -13,7 +13,7 @@ const admin = fn => env.withSecurityRulesDisabled(ctx => fn(ctx.firestore()));
 
 console.log('— Players');
 await t('alice creates own profile', assertSucceeds(setDoc(doc(A, 'users/alice'), user('Alice A'))));
-for (const [db, n] of [[B, 'bob'], [C, 'carol'], [D, 'dave']]) await setDoc(doc(db, 'users', n), user(n));
+for (const [db, n] of [[B, 'bob'], [C, 'carol'], [D, 'dave'], [E, 'erin']]) await setDoc(doc(db, 'users', n), user(n));
 await t('profile with rp 500 refused', assertFails(setDoc(doc(as('eve'), 'users/eve'), { ...user('Eve'), rp: 500 })));
 await t('profile without 18+ refused', assertFails(setDoc(doc(as('eve'), 'users/eve'), { ...user('Eve'), adult: false })));
 await t('cannot create someone else profile', assertFails(setDoc(doc(C, 'users/zed'), user('Zed'))));
@@ -116,6 +116,7 @@ await t('teammate carol cannot confirm', assertFails(updateDoc(doc(C, 'games/g3'
 await t('alice cannot confirm her own report', assertFails(updateDoc(doc(A, 'games/g3'), { status: 'confirmed', responseBy: 'alice' })));
 await t('bob cannot change the score while confirming', assertFails(updateDoc(doc(B, 'games/g3'), { status: 'confirmed', responseBy: 'bob', 'report.home': 0 })));
 await t('nobody can join after a report', assertFails(updateDoc(doc(D, 'games/g3'), { away: arrayUnion('dave'), players: arrayUnion('dave') })));
+await t('a dispute cannot carry kids’ points', assertFails(updateDoc(doc(B, 'games/g3'), { status: 'disputed', responseBy: 'bob', confirmKids: { x: 1 } })));
 await t('bob disputes', assertSucceeds(updateDoc(doc(B, 'games/g3'), { status: 'disputed', responseBy: 'bob' })));
 await t('bob re-reports 21–19', assertSucceeds(updateDoc(doc(B, 'games/g3'), report('bob', 'away', 21, 19))));
 await t('carol confirms', assertSucceeds(updateDoc(doc(C, 'games/g3'), { status: 'confirmed', responseBy: 'carol' })));
@@ -162,6 +163,56 @@ await t('report as someone else refused', assertFails(addDoc(collection(B, 'repo
 await t('made-up reason refused', assertFails(addDoc(collection(B, 'reports'), rep('bob', { reason: 'I just dont like them' }))));
 await t('reports are private (bob cannot read)', assertFails(getDocs(collection(B, 'reports'))));
 await t('alice cannot read reports about her', assertFails(getDocs(collection(A, 'reports'))));
+
+console.log('— Seasons, tournaments and youth teams');
+const ts = d => Timestamp.fromDate(new Date(Date.now() + d * 864e5));
+const league = (by, extra = {}) => ({ type: 'season', division: 'adult', sport: 'Basketball', format: '5v5', name: 'ATX Fall Hoops', description: '', city: 'Austin, TX', start: ts(-10), end: ts(60), organizerUid: by, organizerName: by, teamIds: [], teamNames: {}, staff: [by], createdAt: serverTimestamp(), ...extra });
+await t('anyone can organize a season', assertSucceeds(setDoc(doc(D, 'leagues/L1'), league('dave'))));
+await t('season organized as someone else refused', assertFails(setDoc(doc(D, 'leagues/Lx'), league('alice'))));
+await t('season that starts with teams refused', assertFails(setDoc(doc(D, 'leagues/Lx'), league('dave', { teamIds: ['t1'] }))));
+await t('adult tackle football refused', assertFails(setDoc(doc(D, 'leagues/Lx'), league('dave', { sport: 'Football', format: '11v11' }))));
+await t('youth tackle football season with age group', assertSucceeds(setDoc(doc(D, 'leagues/LY'), league('dave', { division: 'youth', sport: 'Football', format: '11v11', ageGroup: '12U', name: 'Austin Youth Football 12U' }))));
+await t('youth season without age group refused', assertFails(setDoc(doc(D, 'leagues/Lx'), league('dave', { division: 'youth', sport: 'Basketball' }))));
+await t('season ending before it starts refused', assertFails(setDoc(doc(D, 'leagues/Lx'), league('dave', { end: ts(-20) }))));
+await t('captain asks to enter (t1, alice)', assertSucceeds(setDoc(doc(A, 'leagues/L1/entries/t1'), { teamName: 'Eastside', captainUid: 'alice', captainName: 'Alice', at: serverTimestamp() })));
+await t('non-captain cannot enter a team', assertFails(setDoc(doc(C, 'leagues/L1/entries/t2'), { teamName: 'North Loop', captainUid: 'carol', captainName: 'Carol', at: serverTimestamp() })));
+await t('adult team cannot enter a youth season', assertFails(setDoc(doc(A, 'leagues/LY/entries/t1'), { teamName: 'Eastside', captainUid: 'alice', captainName: 'Alice', at: serverTimestamp() })));
+await t('organizer cannot add a team that didn’t ask', assertFails(updateDoc(doc(D, 'leagues/L1'), { teamIds: arrayUnion('t2'), lastChange: 't2' })));
+await t('only the organizer approves', assertFails(updateDoc(doc(A, 'leagues/L1'), { teamIds: arrayUnion('t1'), lastChange: 't1' })));
+await t('organizer approves t1 and adds its captain as staff', assertSucceeds(updateDoc(doc(D, 'leagues/L1'), { teamIds: arrayUnion('t1'), teamNames: { t1: 'Eastside' }, staff: arrayUnion('alice'), lastChange: 't1' })));
+await t('organizer cannot add a random person as staff', assertFails(updateDoc(doc(D, 'leagues/L1'), { staff: arrayUnion('erin') })));
+await setDoc(doc(B, 'leagues/L1/entries/t2'), { teamName: 'North Loop', captainUid: 'bob', captainName: 'Bob', at: serverTimestamp() });
+await updateDoc(doc(D, 'leagues/L1'), { teamIds: arrayUnion('t2'), teamNames: { t1: 'Eastside', t2: 'North Loop' }, staff: arrayUnion('bob'), lastChange: 't2' });
+const lgGame = extra => game('alice', { format: '5v5', homeTeamId: 't1', homeTeamName: 'Eastside', awayTeamId: 't2', awayTeamName: 'North Loop', leagueId: 'L1', leagueName: 'ATX Fall Hoops', ...extra });
+await t('season game between two season teams', assertSucceeds(setDoc(doc(A, 'games/lg1'), lgGame())));
+await t('season game against a team not in it refused', assertFails(setDoc(doc(A, 'games/lgx'), lgGame({ awayTeamId: 't9' }))));
+await t('season game in the wrong sport refused', assertFails(setDoc(doc(A, 'games/lgx'), lgGame({ sport: 'Flag football' }))));
+await t('tackle football pickup game refused', assertFails(setDoc(doc(A, 'games/lgx'), game('alice', { sport: 'Football', format: '11v11' }))));
+await t('players cannot write standings', assertFails(setDoc(doc(A, 'leagues/L1/standings/t1'), { wins: 99 })));
+await t('players cannot write season stats', assertFails(setDoc(doc(A, 'leagues/L1/stats/alice'), { rp: 9999, youth: false })));
+await admin(db => setDoc(doc(db, 'leagues/L1/stats/alice'), { name: 'Alice', rp: 121, youth: false }));
+await t('adult season leaders readable', assertSucceeds(getDocs(query(collection(B, 'leagues/L1/stats'), where('youth', '==', false), orderBy('rp', 'desc')))));
+// youth team + kids
+const yteam = { name: 'Eastside Eagles 12U', sport: 'Football', city: 'Austin, TX', captainUid: 'dave', members: ['dave'], rp: 0, wins: 0, losses: 0, createdAt: serverTimestamp(), youth: true, ageGroup: '12U' };
+await t('coach creates a youth football team', assertSucceeds(setDoc(doc(D, 'teams/y1'), yteam)));
+await t('adult tackle football team refused', assertFails(setDoc(doc(D, 'teams/y9'), { ...yteam, youth: false })));
+const kid = (parent, extra = {}) => ({ name: 'Jayden R.', jersey: '12', parentUid: parent, parentName: parent, status: 'pending', at: serverTimestamp(), ...extra });
+await t('parent adds their kid (pending)', assertSucceeds(setDoc(doc(E, 'teams/y1/kids/k1'), kid('erin'))));
+await t('parent cannot add an approved kid', assertFails(setDoc(doc(E, 'teams/y1/kids/k2'), kid('erin', { status: 'approved' }))));
+await t('cannot add a kid on behalf of another parent', assertFails(setDoc(doc(E, 'teams/y1/kids/k3'), kid('carol'))));
+await t('kids cannot be added to adult teams', assertFails(setDoc(doc(E, 'teams/t1/kids/k4'), kid('erin'))));
+await t('parent cannot approve their own kid', assertFails(updateDoc(doc(E, 'teams/y1/kids/k1'), { status: 'approved' })));
+await t('coach approves the kid', assertSucceeds(updateDoc(doc(D, 'teams/y1/kids/k1'), { status: 'approved' })));
+await t('coach sees the roster', assertSucceeds(getDoc(doc(D, 'teams/y1/kids/k1'))));
+await t('parent sees their kid', assertSucceeds(getDoc(doc(E, 'teams/y1/kids/k1'))));
+await t('strangers cannot see kids', assertFails(getDoc(doc(B, 'teams/y1/kids/k1'))));
+await t('strangers cannot list kids', assertFails(getDocs(collection(B, 'teams/y1/kids'))));
+await t('parent lists all their kids', assertSucceeds(getDocs(query(collectionGroup(E, 'kids'), where('parentUid', '==', 'erin')))));
+await admin(db => setDoc(doc(db, 'leagues/LY/stats/kid_k1'), { name: 'Jayden R.', rp: 14, youth: true, parentUid: 'erin' }));
+await t('organizer sees youth stats', assertSucceeds(getDocs(collection(D, 'leagues/LY/stats'))));
+await t('parent sees their kid’s youth stats', assertSucceeds(getDocs(query(collection(E, 'leagues/LY/stats'), where('parentUid', '==', 'erin')))));
+await t('strangers cannot see youth stats', assertFails(getDocs(collection(B, 'leagues/LY/stats'))));
+await t('strangers cannot read one kid’s stats', assertFails(getDoc(doc(B, 'leagues/LY/stats/kid_k1'))));
 
 console.log(`\n${pass} passed, ${failN} failed`);
 await env.cleanup(); process.exit(failN ? 1 : 0);

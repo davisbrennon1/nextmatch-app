@@ -23,6 +23,10 @@ exports.teamMessage = onDocumentCreated('teams/{tid}/messages/{mid}', ev =>
 exports.teamRequest = onDocumentCreated('teams/{tid}/requests/{uid}', ev =>
   lib.onTeamRequest(ev.params.tid, ev.params.uid, ev.data.data()));
 
+exports.leagueEntry = onDocumentCreated('leagues/{lid}/entries/{teamId}', ev => lib.onLeagueEntry(ev.params.lid, ev.params.teamId, ev.data.data()));
+exports.leagueUpdated = onDocumentUpdated('leagues/{lid}', ev => lib.onLeagueUpdated(ev.params.lid, ev.data.before.data(), ev.data.after.data()));
+exports.kidAdded = onDocumentCreated('teams/{tid}/kids/{kidId}', ev => lib.onKidAdded(ev.params.tid, ev.params.kidId, ev.data.data()));
+
 exports.reportFiled = onDocumentCreated('reports/{rid}', ev => lib.onReport(ev.data.data()));
 
 exports.gameReminders = onSchedule({ schedule: 'every 15 minutes', timeZone: 'America/Chicago' }, () => lib.sendReminders());

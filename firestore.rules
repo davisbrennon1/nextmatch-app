@@ -21,7 +21,10 @@ service cloud.firestore {
     function teamDoc(tid) { return get(/databases/$(database)/documents/teams/$(tid)).data; }
     function inTeam(tid) { return tid == null || me() in teamDoc(tid).members; }
     function blockedBy(uid) { return exists(/databases/$(database)/documents/users/$(uid)/blocked/$(me())); }
-    function sports() { return ['Basketball', 'Flag football']; }
+    function sports() { return ['Basketball', 'Flag football', 'Football']; }
+    function formats() { return ['1v1', '2v2', '3v3', '4v4', '5v5', '6v6', '7v7', '8v8', '9v9', '11v11']; }
+    function leagueDoc(lid) { return get(/databases/$(database)/documents/leagues/$(lid)).data; }
+    function ageGroups() { return ['6U', '8U', '10U', '12U', '14U', 'High school']; }
 
     // ───────── Players ─────────
     match /users/{uid} {
@@ -76,9 +79,12 @@ service cloud.firestore {
       function captain() { return resource.data.captainUid == me(); }
       allow read: if signedIn();
       allow create: if signedIn()
-        && data().keys().hasOnly(['name', 'sport', 'city', 'captainUid', 'members', 'rp', 'wins', 'losses', 'createdAt'])
+        && data().keys().hasOnly(['name', 'sport', 'city', 'captainUid', 'members', 'rp', 'wins', 'losses', 'createdAt', 'youth', 'ageGroup'])
         && data().captainUid == me() && data().members == [me()]
         && str(data().name, 2, 40) && str(data().city, 2, 40) && data().sport in sports()
+        // Youth teams are run by adult coaches; tackle football is youth-only.
+        && (data().get('youth', false) == false || (data().youth == true && data().ageGroup in ageGroups()))
+        && (data().sport != 'Football' || data().get('youth', false) == true)
         && data().rp == 0 && data().wins == 0 && data().losses == 0;
       allow update: if signedIn() && (
         // Captain: rename, add someone who asked to join, or remove one member.
@@ -107,6 +113,71 @@ service cloud.firestore {
           && data().keys().hasOnly(['uid', 'name', 'text', 'at'])
           && data().uid == me() && str(data().name, 1, 40) && str(data().text, 1, 1000);
       }
+      // Kid players on youth teams: added by a parent, approved by a coach.
+      // Only the team's coaches and the kid's own parent can see them.
+      match /kids/{kidId} {
+        allow read: if signedIn() && (me() in teamDoc(tid).members || resource.data.parentUid == me());
+        allow create: if signedIn() && teamDoc(tid).get('youth', false) == true
+          && data().keys().hasOnly(['name', 'jersey', 'parentUid', 'parentName', 'status', 'at'])
+          && data().parentUid == me() && data().status == 'pending'
+          && str(data().name, 2, 30) && str(data().jersey, 0, 3) && str(data().parentName, 1, 40);
+        allow update: if signedIn() && me() in teamDoc(tid).members
+          && changedOnly(['status', 'jersey']) && data().status in ['approved', 'pending'] && str(data().jersey, 0, 3);
+        allow delete: if signedIn() && (resource.data.parentUid == me() || me() in teamDoc(tid).members);
+      }
+    }
+
+    // A parent's own kids across all youth teams ("My kids").
+    match /{path=**}/kids/{kidId} {
+      allow read: if signedIn() && resource.data.parentUid == me();
+    }
+
+    // ───────── Seasons and tournaments ─────────
+    // Anyone can organize one. Team captains ask to enter; the organizer approves.
+    // Standings and season stats are written only by the server.
+    match /leagues/{lid} {
+      function organizer() { return resource.data.organizerUid == me(); }
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && data().keys().hasOnly(['type', 'division', 'sport', 'format', 'ageGroup', 'name', 'description', 'city', 'start', 'end', 'organizerUid', 'organizerName', 'teamIds', 'teamNames', 'staff', 'createdAt'])
+        && data().type in ['season', 'tournament'] && data().division in ['adult', 'youth']
+        && data().sport in sports() && data().format in formats()
+        && (data().sport != 'Football' || data().division == 'youth')
+        && (data().division == 'adult' || data().ageGroup in ageGroups())
+        && str(data().name, 3, 60) && str(data().description, 0, 500) && str(data().city, 2, 40)
+        && data().start is timestamp && data().end is timestamp && data().end > data().start
+        && data().organizerUid == me() && str(data().organizerName, 1, 40)
+        && data().teamIds == [] && data().teamNames == {} && data().staff == [me()];
+      allow update: if signedIn() && organizer()
+        && changedOnly(['name', 'description', 'start', 'end', 'teamIds', 'teamNames', 'staff', 'lastChange'])
+        && str(data().name, 3, 60) && str(data().description, 0, 500) && data().end > data().start
+        && data().teamIds.size() <= 64 && me() in data().staff
+        && ((same('teamIds') && same('staff'))
+          // add a team that asked to enter, and its captain as staff
+          || (added('teamIds') == [data().lastChange].toSet() && removed('teamIds').size() == 0
+              && exists(/databases/$(database)/documents/leagues/$(lid)/entries/$(data().lastChange))
+              && added('staff').difference([teamDoc(data().lastChange).captainUid].toSet()).size() == 0)
+          || (removed('teamIds') == [data().lastChange].toSet() && added('teamIds').size() == 0 && added('staff').size() == 0));
+      allow delete: if signedIn() && organizer() && resource.data.teamIds.size() == 0;
+
+      match /entries/{teamId} {
+        allow read: if signedIn() && (leagueDoc(lid).organizerUid == me() || teamDoc(teamId).captainUid == me());
+        allow create: if signedIn() && teamDoc(teamId).captainUid == me()
+          && data().keys().hasOnly(['teamName', 'captainUid', 'captainName', 'at'])
+          && data().captainUid == me() && str(data().teamName, 1, 40) && str(data().captainName, 1, 40)
+          && teamDoc(teamId).sport == leagueDoc(lid).sport
+          && teamDoc(teamId).get('youth', false) == (leagueDoc(lid).division == 'youth');
+        allow delete: if signedIn() && (leagueDoc(lid).organizerUid == me() || teamDoc(teamId).captainUid == me());
+      }
+      match /standings/{teamId} {
+        allow read: if signedIn();
+      }
+      // Kids' season stats are only shown to the season's organizer and coaches, and the kid's parent.
+      match /stats/{key} {
+        allow get: if signedIn() && (resource.data.get('youth', false) == false || me() in leagueDoc(lid).staff || resource.data.get('parentUid', '') == me());
+        // Lists: anyone for adult seasons; for youth seasons only staff, or a parent asking for their own kids.
+        allow list: if signedIn() && (leagueDoc(lid).division == 'adult' || me() in leagueDoc(lid).staff || resource.data.parentUid == me());
+      }
     }
 
     // ───────── Games and results ─────────
@@ -117,7 +188,12 @@ service cloud.firestore {
 
       allow read: if signedIn();
       allow create: if signedIn()
-        && data().keys().hasOnly(['hostUid', 'hostName', 'sport', 'format', 'need', 'venue', 'venueLat', 'venueLng', 'city', 'when', 'home', 'away', 'players', 'status', 'homeTeamId', 'homeTeamName', 'awayTeamId', 'awayTeamName', 'createdAt'])
+        && data().keys().hasOnly(['hostUid', 'hostName', 'sport', 'format', 'need', 'venue', 'venueLat', 'venueLng', 'city', 'when', 'home', 'away', 'players', 'status', 'homeTeamId', 'homeTeamName', 'awayTeamId', 'awayTeamName', 'leagueId', 'leagueName', 'createdAt'])
+        // Season or tournament games: both teams must be in it, playing its sport.
+        && (data().get('leagueId', null) == null || (str(data().leagueName, 1, 60)
+            && data().homeTeamId in leagueDoc(data().leagueId).teamIds && data().awayTeamId in leagueDoc(data().leagueId).teamIds
+            && data().homeTeamId != data().awayTeamId && data().sport == leagueDoc(data().leagueId).sport))
+        && (data().sport != 'Football' || data().get('leagueId', null) != null)
         // Map location of the place, when it was picked from the list of courts and fields.
         && (!('venueLat' in data()) || (data().venueLat is number && data().venueLat >= -90 && data().venueLat <= 90
             && data().venueLng is number && data().venueLng >= -180 && data().venueLng <= 180))
@@ -125,7 +201,7 @@ service cloud.firestore {
         && data().home == [me()] && data().away == [] && data().players == [me()]
         && data().status == 'open'
         && data().sport in sports()
-        && data().format in ['1v1', '2v2', '3v3', '4v4', '5v5', '6v6', '7v7']
+        && data().format in formats()
         && str(data().hostName, 1, 40) && str(data().need, 1, 40)
         && str(data().venue, 2, 100) && str(data().city, 2, 40)
         && data().when is timestamp
@@ -149,7 +225,9 @@ service cloud.firestore {
           && data().status == 'reported'
           && resource.data.when <= request.time
           && resource.data.home.size() > 0 && resource.data.away.size() > 0
-          && data().report.keys().hasOnly(['by', 'side', 'home', 'away', 'at', 'players'])
+          && data().report.keys().hasOnly(['by', 'side', 'home', 'away', 'at', 'players', 'kids'])
+          // Youth games: coaches enter each kid's points (checked against the rosters by the server).
+          && (!('kids' in data().report) || (data().report.kids is map && data().report.kids.size() <= 80))
           // Optional points per player: only people in this game, at most 14 entries.
           && (!('players' in data().report) || (data().report.players is map
               && data().report.players.size() <= 14
@@ -161,7 +239,9 @@ service cloud.firestore {
           && data().report.at == request.time)
         // Someone on the OTHER side confirms or disputes it.
         || (resource.data.status == 'reported'
-          && changedOnly(['status', 'responseBy'])
+          && changedOnly(['status', 'responseBy', 'confirmKids'])
+          // Youth games: the confirming coach adds their own kids' points.
+          && (!('confirmKids' in data()) || (data().confirmKids is map && data().confirmKids.size() <= 80 && data().status == 'confirmed'))
           && data().status in ['confirmed', 'disputed']
           && data().responseBy == me()
           && inGame(otherSide(resource.data.report.side)))
