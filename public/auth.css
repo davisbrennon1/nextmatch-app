@@ -61,3 +61,28 @@
 .reason:has(input:checked){border-color:var(--brand)}
 @media (max-width:560px){.sides-grid{grid-template-columns:1fr}}
 .team-row div>button,.post-head div>button{display:block;text-align:left}
+/* Front-page ranking chart: one bar per player, length = player points, anchored at the left. */
+.rankchart{padding:16px 18px}
+.rk-head{display:flex;justify-content:space-between;padding:0 2px 8px;border-bottom:1px solid var(--line)}
+.rk{list-style:none;margin:0;padding:0}
+.rk-row{position:relative;display:grid;grid-template-columns:24px minmax(0,170px) minmax(0,1fr) 64px;gap:12px;align-items:center;width:100%;padding:9px 2px;border-radius:8px;text-align:left}
+.rk-row:hover,.rk-row:focus-visible{background:var(--surface-2)}
+.rk-n{font:800 17px var(--display);color:var(--muted);text-align:center;font-variant-numeric:tabular-nums}
+.rk-name{font-size:14px;font-weight:700;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rk-name small{display:block;font:500 11px var(--body);color:var(--muted);margin-top:1px}
+.rk-name em{font-style:normal;font:700 10px var(--mono);letter-spacing:.8px;text-transform:uppercase;color:var(--brand);margin-left:6px}
+.rk-track{height:10px;background:color-mix(in srgb,var(--surface-2) 70%,transparent);border-radius:0 4px 4px 0;overflow:hidden}
+.rk-track i{display:block;height:100%;background:color-mix(in srgb,var(--brand) 42%,var(--surface));border-radius:0 4px 4px 0}
+.rk-row.me .rk-track i{background:var(--brand)}
+.rk-row.me .rk-n{color:var(--brand)}
+.rk-val{font:600 13px var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+.rk-gap{text-align:center;color:var(--muted);letter-spacing:3px;padding:2px 0}
+.rk-foot{font-size:13px;margin-top:10px}
+.rk-tip{display:none;position:absolute;z-index:5;left:36px;bottom:calc(100% + 4px);background:var(--ink);color:var(--bg);font:600 12px var(--body);padding:7px 10px;border-radius:8px;white-space:nowrap;pointer-events:none;box-shadow:0 6px 18px #0004}
+@media (hover:hover){.rk-row:hover .rk-tip{display:block}}
+.rk-row:focus-visible .rk-tip{display:block}
+@media (max-width:560px){
+  .rk-row{grid-template-columns:22px minmax(0,1fr) auto;grid-template-areas:"n name val" ". bar bar";row-gap:6px;column-gap:10px}
+  .rk-n{grid-area:n}.rk-name{grid-area:name}.rk-val{grid-area:val}.rk-track{grid-area:bar}
+  .rk-tip{left:8px;white-space:normal;max-width:calc(100% - 16px)}
+}

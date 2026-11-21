@@ -2,7 +2,7 @@
 
 Pickup basketball and flag football across Texas. Anyone with the link can create
 a free account with **email, Google, or Apple**, then post and join games, report
-and confirm scores to earn ranking points, build teams with team chat, share
+and confirm scores to earn player points, build teams with team chat, share
 highlights, message each other, get game reminders, and report or block players.
 
 It runs on **Firebase** (Google's free app platform): Firebase handles sign-in,
@@ -22,7 +22,7 @@ takes longer (step 5).
 | `firestore.rules` | Security rules: who can read and change what in the database |
 | `firestore.indexes.json` | Database indexes the app needs |
 | `storage.rules` | Rules for photo/video uploads (only if you turn uploads on) |
-| `functions/` | Server code: awards ranking points, sends reminders and notifications, hides reported posts |
+| `functions/` | Server code: awards player points, sends reminders and notifications, hides reported posts |
 | `firebase.json` | Tells Firebase how to publish the site |
 | `tests/` | Automated checks for the security rules and the server code |
 
@@ -79,7 +79,7 @@ server code needs (it's still free at beta size).
 
 ## Step 4b: Turn on the Blaze plan (needed for points, reminders and notifications)
 
-Ranking points, game reminders, notifications and auto-hiding reported posts run as
+Player points, game reminders, notifications and auto-hiding reported posts run as
 **Cloud Functions** (server code in `functions/`). Firebase only runs those on the
 **Blaze** pay-as-you-go plan, which needs a card on file. Its free allowance
 (2 million function runs a month) is far more than a friends beta uses, so expect
@@ -195,7 +195,7 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
 
 ---
 
-## How results and ranking points work
+## How results and player points work
 
 1. After a game's start time, anyone who played reports the final score from the game page
    (or straight from the scoreboard).
@@ -223,7 +223,7 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
 - **Remove a post or game:** Firebase → Firestore Database → `posts` or `games` →
   pick the document → delete.
 - **Ban someone:** Authentication → Users → ⋮ → **Disable account**.
-- **Fix ranking points:** players can't change their own points. To correct a mistake,
+- **Fix player points:** players can't change their own points. To correct a mistake,
   edit `rp`, `wins`, `losses` in Firestore → `users` (or `teams`).
 - **Add a city:** edit `CITIES` in `public/config.js` and deploy.
 - **Delete someone's account at their request:** Authentication → Users → ⋮ →
@@ -234,7 +234,7 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
 - Accounts with email + password (with password reset), Google, and Apple (once set up)
 - First-time profile setup with an 18+ confirmation
 - Pickup and team games with home and away sides, roster limits, and team-only sides
-- Report → confirm → automatic ranking points, wins and losses (players and teams)
+- Report → confirm → automatic player points, wins and losses (players and teams)
 - Teams: create, ask to join, captain approves or removes, team chat, team record
 - Notification bell, push alerts, and game reminders an hour before
 - Report and block, with auto-hiding of posts that get 3 reports

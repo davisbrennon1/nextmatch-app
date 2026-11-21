@@ -185,7 +185,7 @@ function gameChanged(path, b, g) {
   if (b.status === 'reported' && g.status === 'disputed') notify(g.players, { type: 'disputed', title: 'Score disputed', body: `${nameOf(g.responseBy)} disputed the score for ${title}. Talk it out, then report it again.`, link });
   if (b.status !== 'confirmed' && g.status === 'confirmed') {
     const res = award(path);
-    if (res) notify(g.players, { type: 'final', title: `Final: ${g.report.home}–${g.report.away}`, body: res.winner ? `${sideName(g, res.winner)} wins. +${res.p} ranking points to the winners.` : 'A draw. No points this time.', link });
+    if (res) notify(g.players, { type: 'final', title: `Final: ${g.report.home}–${g.report.away}`, body: res.winner ? `${sideName(g, res.winner)} wins. +${res.p} player points to the winners.` : 'A draw. No points this time.', link });
   }
 }
 function joinRequested(tid, uid, r) {
@@ -259,7 +259,7 @@ function seed() {
   const n = (id, type, title, body, link, read, ago) => put(`users/you/notifications/${id}`, { type, title, body, link, read, at: ts(now - ago) });
   n('n1', 'confirm', 'Confirm the final score', 'Devin Carter reported Devin Carter 21, Challengers 18. Confirm it or dispute it.', 'game/needsconfirm', false, 20 * H);
   n('n2', 'team', 'Chris Evans wants to join Eastside Buckets', 'Open the team to approve or decline.', 'team/eastside', false, 3 * H);
-  n('n3', 'final', 'Final: 15–21', 'Marcus Williams wins. +25 ranking points to the winners.', 'game/lostmarcus', true, 5 * D);
+  n('n3', 'final', 'Final: 15–21', 'Marcus Williams wins. +25 player points to the winners.', 'game/lostmarcus', true, 5 * D);
   ['marcus', 'riley'].forEach(u => put(`users/you/following/${u}`, { at: ts(now - 10 * D) }));
   const wk = (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10) })();
   put(`users/you/workouts/${wk}_handles`, { challenge: 'handles', week: wk, fp: 75, at: ts(now - 2 * H) });

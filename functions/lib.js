@@ -1,6 +1,6 @@
 // Server-side logic for NextMatch. index.js wires these to database events and a timer.
 // Runs with full database access, so it does the things players must not do themselves:
-// award ranking points, write notifications, send push messages, hide reported posts.
+// award player points, write notifications, send push messages, hide reported posts.
 const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 
@@ -88,7 +88,7 @@ async function onGameUpdated(before, after, ref) {
     const res = await awardResult(ref);
     if (res) {
       const score = `${g.report.home}–${g.report.away}`;
-      await notify(g.players, { type: 'final', title: `Final: ${score}`, body: res.winner ? `${sideName(g, res.winner)} wins. +${res.p} ranking points to the winners.` : 'A draw. No points this time.', link });
+      await notify(g.players, { type: 'final', title: `Final: ${score}`, body: res.winner ? `${sideName(g, res.winner)} wins. +${res.p} player points to the winners.` : 'A draw. No points this time.', link });
     }
   }
 }

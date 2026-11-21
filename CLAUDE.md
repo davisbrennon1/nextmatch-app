@@ -1,7 +1,7 @@
 # NextMatch
 
 Pickup basketball and flag football app for Texas. Plain HTML/CSS/JS (no build step) on Firebase:
-`public/` is the site, `firestore.rules` the security rules, `functions/` the server code (points,
+`public/` is the site, `firestore.rules` the security rules, `functions/` the server code (player points,
 notifications, reminders, auto-hiding reported posts). Setup steps for the owner are in README.md.
 
 ## The owner reviews changes through the preview link
