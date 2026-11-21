@@ -2,119 +2,226 @@ rules_version = '2';
 
 // Who can read and change what in the NextMatch database.
 // Everything requires a signed-in account. People can only change their own
-// stuff; ranking points and records can only be changed from the Firebase console.
+// stuff. Ranking points, records, final results, reminders and notifications are
+// written only by the server code in functions/ (or by you in the Firebase console).
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
-    function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+    function me() { return request.auth.uid; }
+    function isMe(uid) { return signedIn() && me() == uid; }
     function str(v, lo, hi) { return v is string && v.size() >= lo && v.size() <= hi; }
-    function changedOnly(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
-    // The list field changed by exactly one entry: the signed-in person's own id.
-    function toggledSelf(field) {
-      let before = resource.data.get(field, []).toSet();
-      let after = request.resource.data.get(field, []).toSet();
-      return after.difference(before).union(before.difference(after)) == [request.auth.uid].toSet();
-    }
+    function data() { return request.resource.data; }
+    function changedOnly(keys) { return data().diff(resource.data).affectedKeys().hasOnly(keys); }
+    function added(field) { return data().get(field, []).toSet().difference(resource.data.get(field, []).toSet()); }
+    function removed(field) { return resource.data.get(field, []).toSet().difference(data().get(field, []).toSet()); }
+    function same(field) { return added(field).size() == 0 && removed(field).size() == 0; }
+    // The list changed by exactly one entry: the signed-in person's own id.
+    function toggledSelf(field) { return added(field).union(removed(field)) == [me()].toSet(); }
+    function teamDoc(tid) { return get(/databases/$(database)/documents/teams/$(tid)).data; }
+    function inTeam(tid) { return tid == null || me() in teamDoc(tid).members; }
+    function blockedBy(uid) { return exists(/databases/$(database)/documents/users/$(uid)/blocked/$(me())); }
+    function sports() { return ['Basketball', 'Flag football']; }
 
+    // ───────── Players ─────────
     match /users/{uid} {
       allow read: if signedIn();
       allow create: if isMe(uid)
-        && request.resource.data.keys().hasOnly(['name', 'city', 'sports', 'rp', 'wins', 'losses', 'adult', 'createdAt'])
-        && str(request.resource.data.name, 2, 40)
-        && str(request.resource.data.city, 2, 40)
-        && request.resource.data.sports is list && request.resource.data.sports.size() <= 2
-        && request.resource.data.rp == 0 && request.resource.data.wins == 0 && request.resource.data.losses == 0
-        && request.resource.data.adult == true;
+        && data().keys().hasOnly(['name', 'city', 'sports', 'rp', 'wins', 'losses', 'adult', 'createdAt'])
+        && str(data().name, 2, 40)
+        && str(data().city, 2, 40)
+        && data().sports is list && data().sports.size() <= 2
+        && data().rp == 0 && data().wins == 0 && data().losses == 0
+        && data().adult == true;
       allow update: if isMe(uid)
         && changedOnly(['name', 'city', 'sports', 'tournamentInterest'])
-        && str(request.resource.data.name, 2, 40)
-        && str(request.resource.data.city, 2, 40)
-        && request.resource.data.sports is list && request.resource.data.sports.size() <= 2
-        && request.resource.data.get('tournamentInterest', []).size() <= 10;
+        && str(data().name, 2, 40)
+        && str(data().city, 2, 40)
+        && data().sports is list && data().sports.size() <= 2
+        && data().get('tournamentInterest', []).size() <= 10;
 
       match /following/{other} {
         allow read: if signedIn();
         allow create: if isMe(uid) && other != uid;
         allow delete: if isMe(uid);
       }
-
+      match /blocked/{other} {
+        allow read, delete: if isMe(uid);
+        allow create: if isMe(uid) && other != uid && data().keys().hasOnly(['at']);
+      }
       // Weekly fitness challenges: one claim per challenge per week, never edited.
       match /workouts/{wid} {
         allow read: if isMe(uid);
         allow create: if isMe(uid)
-          && request.resource.data.keys().hasOnly(['challenge', 'week', 'fp', 'at'])
-          && request.resource.data.challenge in ['footwork', 'handles', 'mobility']
-          && request.resource.data.fp == {'footwork': 50, 'handles': 75, 'mobility': 40}[request.resource.data.challenge]
-          && str(request.resource.data.week, 10, 10)
-          && wid == request.resource.data.week + '_' + request.resource.data.challenge;
+          && data().keys().hasOnly(['challenge', 'week', 'fp', 'at'])
+          && data().challenge in ['footwork', 'handles', 'mobility']
+          && data().fp == {'footwork': 50, 'handles': 75, 'mobility': 40}[data().challenge]
+          && str(data().week, 10, 10)
+          && wid == data().week + '_' + data().challenge;
+      }
+      // Written by the server; people can read, mark read and clear their own.
+      match /notifications/{nid} {
+        allow read, delete: if isMe(uid);
+        allow update: if isMe(uid) && changedOnly(['read']) && data().read == true;
+      }
+      // Devices that receive push notifications.
+      match /tokens/{token} {
+        allow read, delete: if isMe(uid);
+        allow create: if isMe(uid) && data().keys().hasOnly(['at', 'ua']);
       }
     }
 
-    match /games/{gid} {
+    // ───────── Teams ─────────
+    match /teams/{tid} {
+      function captain() { return resource.data.captainUid == me(); }
       allow read: if signedIn();
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['hostUid', 'hostName', 'sport', 'format', 'need', 'venue', 'city', 'when', 'players', 'createdAt'])
-        && request.resource.data.hostUid == request.auth.uid
-        && request.resource.data.players == [request.auth.uid]
-        && request.resource.data.sport in ['Basketball', 'Flag football']
-        && request.resource.data.format in ['1v1', '2v2', '3v3', '4v4', '5v5', '6v6', '7v7']
-        && str(request.resource.data.hostName, 1, 40)
-        && str(request.resource.data.need, 1, 40)
-        && str(request.resource.data.venue, 2, 100)
-        && str(request.resource.data.city, 2, 40)
-        && request.resource.data.when is timestamp;
-      // Anyone but the host can join or leave (only their own spot), up to the game's size.
-      allow update: if signedIn()
-        && resource.data.hostUid != request.auth.uid
-        && changedOnly(['players'])
-        && toggledSelf('players')
-        && request.resource.data.players.size() <= int(resource.data.format.split('v')[0]) * 2;
-      allow delete: if signedIn() && resource.data.hostUid == request.auth.uid;
+        && data().keys().hasOnly(['name', 'sport', 'city', 'captainUid', 'members', 'rp', 'wins', 'losses', 'createdAt'])
+        && data().captainUid == me() && data().members == [me()]
+        && str(data().name, 2, 40) && str(data().city, 2, 40) && data().sport in sports()
+        && data().rp == 0 && data().wins == 0 && data().losses == 0;
+      allow update: if signedIn() && (
+        // Captain: rename, add someone who asked to join, or remove one member.
+        (captain()
+          && changedOnly(['name', 'members', 'lastChange'])
+          && str(data().name, 2, 40)
+          && me() in data().members
+          && data().members.size() <= 15
+          && (same('members')
+            || (added('members') == [data().lastChange].toSet() && removed('members').size() == 0
+                && exists(/databases/$(database)/documents/teams/$(tid)/requests/$(data().lastChange)))
+            || (removed('members') == [data().lastChange].toSet() && added('members').size() == 0)))
+        // Anyone else: leave the team.
+        || (!captain() && changedOnly(['members']) && removed('members') == [me()].toSet() && added('members').size() == 0)
+      );
+      allow delete: if signedIn() && captain() && resource.data.members.size() == 1;
+
+      match /requests/{uid} {
+        allow read: if isMe(uid) || teamDoc(tid).captainUid == me();
+        allow create: if isMe(uid) && !(uid in teamDoc(tid).members) && data().keys().hasOnly(['name', 'at']) && str(data().name, 1, 40);
+        allow delete: if isMe(uid) || teamDoc(tid).captainUid == me();
+      }
+      match /messages/{mid} {
+        allow read: if signedIn() && me() in teamDoc(tid).members;
+        allow create: if signedIn() && me() in teamDoc(tid).members
+          && data().keys().hasOnly(['uid', 'name', 'text', 'at'])
+          && data().uid == me() && str(data().name, 1, 40) && str(data().text, 1, 1000);
+      }
     }
 
+    // ───────── Games and results ─────────
+    match /games/{gid} {
+      function size() { return int(resource.data.format.split('v')[0]); }
+      function inGame(side) { return me() in resource.data[side]; }
+      function otherSide(side) { return side == 'home' ? 'away' : 'home'; }
+
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && data().keys().hasOnly(['hostUid', 'hostName', 'sport', 'format', 'need', 'venue', 'city', 'when', 'home', 'away', 'players', 'status', 'homeTeamId', 'homeTeamName', 'awayTeamId', 'awayTeamName', 'createdAt'])
+        && data().hostUid == me()
+        && data().home == [me()] && data().away == [] && data().players == [me()]
+        && data().status == 'open'
+        && data().sport in sports()
+        && data().format in ['1v1', '2v2', '3v3', '4v4', '5v5', '6v6', '7v7']
+        && str(data().hostName, 1, 40) && str(data().need, 1, 40)
+        && str(data().venue, 2, 100) && str(data().city, 2, 40)
+        && data().when is timestamp
+        && inTeam(data().get('homeTeamId', null))
+        && (data().get('awayTeamId', null) == null || exists(/databases/$(database)/documents/teams/$(data().awayTeamId)));
+
+      allow update: if signedIn() && (
+        // Join one side (if that side is a team, only its members), or leave.
+        (resource.data.status == 'open'
+          && changedOnly(['home', 'away', 'players'])
+          && toggledSelf('players')
+          && data().home.size() <= size() && data().away.size() <= size()
+          && ((added('home') == [me()].toSet() && same('away') && inTeam(resource.data.get('homeTeamId', null)))
+            || (added('away') == [me()].toSet() && same('home') && inTeam(resource.data.get('awayTeamId', null)))
+            || (me() != resource.data.hostUid
+                && ((removed('home') == [me()].toSet() && same('away'))
+                  || (removed('away') == [me()].toSet() && same('home'))))))
+        // After start time, a player reports the final score for both sides to see.
+        || (resource.data.status in ['open', 'disputed']
+          && changedOnly(['status', 'report', 'responseBy'])
+          && data().status == 'reported'
+          && resource.data.when <= request.time
+          && resource.data.home.size() > 0 && resource.data.away.size() > 0
+          && data().report.keys().hasOnly(['by', 'side', 'home', 'away', 'at'])
+          && data().report.by == me()
+          && data().report.side in ['home', 'away'] && inGame(data().report.side)
+          && data().report.home is int && data().report.home >= 0 && data().report.home <= 999
+          && data().report.away is int && data().report.away >= 0 && data().report.away <= 999
+          && data().report.at == request.time)
+        // Someone on the OTHER side confirms or disputes it.
+        || (resource.data.status == 'reported'
+          && changedOnly(['status', 'responseBy'])
+          && data().status in ['confirmed', 'disputed']
+          && data().responseBy == me()
+          && inGame(otherSide(resource.data.report.side)))
+      );
+      allow delete: if signedIn() && resource.data.hostUid == me() && resource.data.status == 'open';
+    }
+
+    // ───────── Feed ─────────
     match /posts/{pid} {
       allow read: if signedIn();
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['uid', 'name', 'city', 'kind', 'caption', 'sport', 'art', 'mediaUrl', 'mediaType', 'likedBy', 'createdAt'])
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.kind in ['Highlight', 'Training']
-        && str(request.resource.data.name, 1, 40)
-        && str(request.resource.data.caption, 1, 1000)
-        && request.resource.data.likedBy == [];
+        && data().keys().hasOnly(['uid', 'name', 'city', 'kind', 'caption', 'sport', 'art', 'mediaUrl', 'mediaType', 'likedBy', 'createdAt'])
+        && data().uid == me()
+        && data().kind in ['Highlight', 'Training']
+        && str(data().name, 1, 40)
+        && str(data().caption, 1, 1000)
+        && data().likedBy == [];
       // Likes: anyone can add or remove only their own like.
       allow update: if signedIn() && changedOnly(['likedBy']) && toggledSelf('likedBy');
-      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.uid == me();
 
       match /comments/{cid} {
         allow read: if signedIn();
         allow create: if signedIn()
-          && request.resource.data.keys().hasOnly(['uid', 'name', 'text', 'at'])
-          && request.resource.data.uid == request.auth.uid
-          && str(request.resource.data.name, 1, 40)
-          && str(request.resource.data.text, 1, 500);
-        allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+          && data().keys().hasOnly(['uid', 'name', 'text', 'at'])
+          && data().uid == me()
+          && str(data().name, 1, 40)
+          && str(data().text, 1, 500)
+          && !blockedBy(get(/databases/$(database)/documents/posts/$(pid)).data.uid);
+        allow delete: if signedIn() && resource.data.uid == me();
       }
     }
 
-    // Direct messages. The conversation id is the two members' ids joined by "_".
+    // ───────── Direct messages ─────────
+    // The conversation id is the two members' ids joined by "_".
     match /conversations/{cid} {
       function members() { return cid.split('_'); }
-      function inConvo() { return signedIn() && members().size() == 2 && members()[0] != members()[1] && request.auth.uid in members(); }
+      function other() { return members()[0] == me() ? members()[1] : members()[0]; }
+      function inConvo() { return signedIn() && members().size() == 2 && members()[0] != members()[1] && me() in members(); }
 
-      allow read: if signedIn() && request.auth.uid in resource.data.members;
-      allow create, update: if inConvo()
-        && request.resource.data.members == members()
-        && request.resource.data.lastUid == request.auth.uid
-        && str(request.resource.data.last, 1, 120);
+      allow read: if signedIn() && me() in resource.data.members;
+      allow create, update: if inConvo() && !blockedBy(other())
+        && data().members == members()
+        && data().lastUid == me()
+        && str(data().last, 1, 120);
 
       match /messages/{mid} {
         allow read: if inConvo();
-        allow create: if inConvo()
-          && request.resource.data.keys().hasOnly(['uid', 'text', 'at'])
-          && request.resource.data.uid == request.auth.uid
-          && str(request.resource.data.text, 1, 1000);
+        allow create: if inConvo() && !blockedBy(other())
+          && data().keys().hasOnly(['uid', 'text', 'at'])
+          && data().uid == me()
+          && str(data().text, 1, 1000);
       }
+    }
+
+    // ───────── Safety reports ─────────
+    // Anyone can file one. Only you (in the Firebase console) can read them.
+    match /reports/{rid} {
+      allow create: if signedIn()
+        && data().keys().hasOnly(['by', 'targetType', 'targetId', 'targetUid', 'reason', 'details', 'at'])
+        && data().by == me()
+        && data().targetType in ['user', 'post', 'game', 'team', 'message']
+        && str(data().targetId, 1, 200)
+        && str(data().targetUid, 0, 128)
+        && data().reason in ['Harassment or hate', 'Spam or scam', 'Inappropriate content', 'Cheating or fake results', 'Unsafe at a game', 'Other']
+        && str(data().details, 0, 500)
+        && data().at == request.time;
     }
   }
 }

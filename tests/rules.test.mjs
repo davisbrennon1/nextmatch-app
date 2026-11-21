@@ -1,48 +1,118 @@
+// Security-rule checks. Run with: npm run test:rules (needs Java for the Firebase emulator).
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, getDocs, serverTimestamp, Timestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, getDocs, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch } from 'firebase/firestore';
 import fs from 'fs';
 
 const env = await initializeTestEnvironment({ projectId: 'demo-nextmatch', firestore: { rules: fs.readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8'), host: '127.0.0.1', port: 8080 } });
-const A = env.authenticatedContext('alice').firestore(), B = env.authenticatedContext('bob').firestore(), C = env.authenticatedContext('carol').firestore(), anon = env.unauthenticatedContext().firestore();
+const as = uid => env.authenticatedContext(uid).firestore();
+const A = as('alice'), B = as('bob'), C = as('carol'), D = as('dave'), anon = env.unauthenticatedContext().firestore();
 let pass = 0, failN = 0;
 async function t(name, p) { try { await p; pass++; console.log('ok  ', name) } catch (e) { failN++; console.log('FAIL', name, '-', e.message.split('\n')[0]) } }
 const user = n => ({ name: n, city: 'Austin', sports: ['Basketball'], rp: 0, wins: 0, losses: 0, adult: true, createdAt: serverTimestamp() });
+const admin = fn => env.withSecurityRulesDisabled(ctx => fn(ctx.firestore()));
 
-// users
+console.log('— Players');
 await t('alice creates own profile', assertSucceeds(setDoc(doc(A, 'users/alice'), user('Alice A'))));
-await t('bob creates own profile', assertSucceeds(setDoc(doc(B, 'users/bob'), user('Bob B'))));
-await t('profile with rp 500 refused', assertFails(setDoc(doc(C, 'users/carol'), { ...user('Carol'), rp: 500 })));
-await t('profile without 18+ refused', assertFails(setDoc(doc(C, 'users/carol'), { ...user('Carol'), adult: false })));
-await t('cannot create someone else profile', assertFails(setDoc(doc(C, 'users/dave'), user('Dave'))));
+for (const [db, n] of [[B, 'bob'], [C, 'carol'], [D, 'dave']]) await setDoc(doc(db, 'users', n), user(n));
+await t('profile with rp 500 refused', assertFails(setDoc(doc(as('eve'), 'users/eve'), { ...user('Eve'), rp: 500 })));
+await t('profile without 18+ refused', assertFails(setDoc(doc(as('eve'), 'users/eve'), { ...user('Eve'), adult: false })));
+await t('cannot create someone else profile', assertFails(setDoc(doc(C, 'users/zed'), user('Zed'))));
 await t('signed-out cannot read users', assertFails(getDoc(doc(anon, 'users/alice'))));
 await t('bob reads alice', assertSucceeds(getDoc(doc(B, 'users/alice'))));
 await t('alice edits name/city', assertSucceeds(updateDoc(doc(A, 'users/alice'), { name: 'Alice Allen', city: 'Dallas' })));
 await t('alice cannot raise own rp', assertFails(updateDoc(doc(A, 'users/alice'), { rp: 9999 })));
+await t('alice cannot add wins', assertFails(updateDoc(doc(A, 'users/alice'), { wins: 50 })));
 await t('alice cannot edit bob', assertFails(updateDoc(doc(A, 'users/bob'), { name: 'Hacked' })));
 await t('tournament interest', assertSucceeds(updateDoc(doc(A, 'users/alice'), { tournamentInterest: arrayUnion('ATX Hoops Classic') })));
 await updateDoc(doc(A, 'users/alice'), { city: 'Austin' });
-// follows + workouts
 await t('alice follows bob', assertSucceeds(setDoc(doc(A, 'users/alice/following/bob'), { at: serverTimestamp() })));
 await t('alice cannot make bob follow', assertFails(setDoc(doc(A, 'users/bob/following/alice'), { at: serverTimestamp() })));
 await t('workout claim', assertSucceeds(setDoc(doc(A, 'users/alice/workouts/2026-11-16_handles'), { challenge: 'handles', week: '2026-11-16', fp: 75, at: serverTimestamp() })));
 await t('same workout twice refused', assertFails(setDoc(doc(A, 'users/alice/workouts/2026-11-16_handles'), { challenge: 'handles', week: '2026-11-16', fp: 75, at: serverTimestamp() })));
 await t('inflated fp refused', assertFails(setDoc(doc(A, 'users/alice/workouts/2026-11-16_footwork'), { challenge: 'footwork', week: '2026-11-16', fp: 5000, at: serverTimestamp() })));
 await t('bob cannot read alice workouts', assertFails(getDoc(doc(B, 'users/alice/workouts/2026-11-16_handles'))));
-// games
-const when = Timestamp.fromDate(new Date(Date.now() + 864e5));
-const game = { hostUid: 'alice', hostName: 'Alice', sport: 'Basketball', format: '1v1', need: 'Open challenge', venue: 'Pease Park Courts', city: 'Austin', when, players: ['alice'], createdAt: serverTimestamp() };
-await t('alice posts game', assertSucceeds(setDoc(doc(A, 'games/g1'), game)));
-await t('game posted as bob refused', assertFails(setDoc(doc(A, 'games/g2'), { ...game, hostUid: 'bob' })));
-await t('bob joins', assertSucceeds(updateDoc(doc(B, 'games/g1'), { players: arrayUnion('bob') })));
-await t('carol joins full 1v1 refused', assertFails(updateDoc(doc(C, 'games/g1'), { players: arrayUnion('carol') })));
-await t('bob cannot add carol', assertFails(updateDoc(doc(B, 'games/g1'), { players: ['alice', 'bob', 'carol'] })));
+
+console.log('— Notifications and devices');
+await admin(db => setDoc(doc(db, 'users/alice/notifications/n1'), { type: 'join', title: 'x', body: 'y', link: '', read: false, at: serverTimestamp() }));
+await t('alice reads her notifications', assertSucceeds(getDocs(collection(A, 'users/alice/notifications'))));
+await t('bob cannot read alice notifications', assertFails(getDocs(collection(B, 'users/alice/notifications'))));
+await t('alice marks read', assertSucceeds(updateDoc(doc(A, 'users/alice/notifications/n1'), { read: true })));
+await t('alice cannot rewrite a notification', assertFails(updateDoc(doc(A, 'users/alice/notifications/n1'), { title: 'fake' })));
+await t('nobody can create notifications', assertFails(setDoc(doc(B, 'users/alice/notifications/n2'), { title: 'spam' })));
+await t('alice registers a device', assertSucceeds(setDoc(doc(A, 'users/alice/tokens/tok123'), { at: serverTimestamp(), ua: 'test' })));
+await t('bob cannot add a device for alice', assertFails(setDoc(doc(B, 'users/alice/tokens/tok999'), { at: serverTimestamp(), ua: 'x' })));
+
+console.log('— Teams');
+const team = (cap, name) => ({ name, sport: 'Basketball', city: 'Austin', captainUid: cap, members: [cap], rp: 0, wins: 0, losses: 0, createdAt: serverTimestamp() });
+await t('alice creates a team', assertSucceeds(setDoc(doc(A, 'teams/t1'), team('alice', 'Eastside Buckets'))));
+await t('team with points refused', assertFails(setDoc(doc(B, 'teams/t9'), { ...team('bob', 'Cheaters'), rp: 900 })));
+await t('team for someone else refused', assertFails(setDoc(doc(B, 'teams/t9'), team('carol', 'Not mine'))));
+await t('bob creates a team', assertSucceeds(setDoc(doc(B, 'teams/t2'), team('bob', 'North Loop'))));
+await t('captain cannot add bob without a request', assertFails(updateDoc(doc(A, 'teams/t1'), { members: arrayUnion('bob'), lastChange: 'bob' })));
+await t('carol cannot add herself directly', assertFails(updateDoc(doc(C, 'teams/t1'), { members: arrayUnion('carol') })));
+await t('carol asks to join', assertSucceeds(setDoc(doc(C, 'teams/t1/requests/carol'), { name: 'Carol', at: serverTimestamp() })));
+await t('carol cannot ask on behalf of dave', assertFails(setDoc(doc(C, 'teams/t1/requests/dave'), { name: 'Dave', at: serverTimestamp() })));
+await t('captain sees requests', assertSucceeds(getDocs(collection(A, 'teams/t1/requests'))));
+await t('dave cannot see requests', assertFails(getDocs(collection(D, 'teams/t1/requests'))));
+await t('non-captain cannot approve', assertFails(updateDoc(doc(C, 'teams/t1'), { members: arrayUnion('carol'), lastChange: 'carol' })));
+const approve = writeBatch(A); approve.update(doc(A, 'teams/t1'), { members: arrayUnion('carol'), lastChange: 'carol' }); approve.delete(doc(A, 'teams/t1/requests/carol'));
+await t('captain approves carol', assertSucceeds(approve.commit()));
+await t('captain cannot set team points', assertFails(updateDoc(doc(A, 'teams/t1'), { rp: 5000 })));
+await t('captain cannot swap captain', assertFails(updateDoc(doc(A, 'teams/t1'), { captainUid: 'carol' })));
+await t('carol posts in team chat', assertSucceeds(addDoc(collection(C, 'teams/t1/messages'), { uid: 'carol', name: 'Carol', text: 'Run Thursday?', at: serverTimestamp() })));
+await t('dave cannot read team chat', assertFails(getDocs(collection(D, 'teams/t1/messages'))));
+await t('dave cannot post in team chat', assertFails(addDoc(collection(D, 'teams/t1/messages'), { uid: 'dave', name: 'Dave', text: 'hi', at: serverTimestamp() })));
+await t('carol cannot remove alice', assertFails(updateDoc(doc(C, 'teams/t1'), { members: ['carol'] })));
+await t('captain renames team', assertSucceeds(updateDoc(doc(A, 'teams/t1'), { name: 'Eastside Buckets ATX' })));
+await t('captain cannot delete a team with players', assertFails(deleteDoc(doc(A, 'teams/t1'))));
+
+console.log('— Games, sides and team games');
+const soon = Timestamp.fromDate(new Date(Date.now() + 864e5)), past = Timestamp.fromDate(new Date(Date.now() - 36e5));
+const game = (host, extra = {}) => ({ hostUid: host, hostName: host, sport: 'Basketball', format: '1v1', need: 'Open challenge', venue: 'Pease Park', city: 'Austin', when: soon, home: [host], away: [], players: [host], status: 'open', createdAt: serverTimestamp(), ...extra });
+await t('alice posts a game', assertSucceeds(setDoc(doc(A, 'games/g1'), game('alice'))));
+await t('game hosted as bob refused', assertFails(setDoc(doc(A, 'games/gx'), game('bob'))));
+await t('game already "final" refused', assertFails(setDoc(doc(A, 'games/gx'), game('alice', { status: 'final' }))));
+await t('game with fake roster refused', assertFails(setDoc(doc(A, 'games/gx'), game('alice', { away: ['bob'], players: ['alice', 'bob'] }))));
+await t('bob joins away', assertSucceeds(updateDoc(doc(B, 'games/g1'), { away: arrayUnion('bob'), players: arrayUnion('bob') })));
+await t('carol joins full 1v1 refused', assertFails(updateDoc(doc(C, 'games/g1'), { home: arrayUnion('carol'), players: arrayUnion('carol') })));
+await t('bob cannot add carol', assertFails(updateDoc(doc(B, 'games/g1'), { away: ['bob', 'carol'], players: ['alice', 'bob', 'carol'] })));
+await t('join without players list refused', assertFails(updateDoc(doc(C, 'games/g1'), { away: arrayUnion('carol') })));
 await t('bob cannot change venue', assertFails(updateDoc(doc(B, 'games/g1'), { venue: 'Elsewhere' })));
-await t('bob cannot remove alice', assertFails(updateDoc(doc(B, 'games/g1'), { players: ['bob'] })));
-await t('bob leaves', assertSucceeds(updateDoc(doc(B, 'games/g1'), { players: arrayRemove('bob') })));
+await t('bob cannot remove alice', assertFails(updateDoc(doc(B, 'games/g1'), { home: [], players: ['bob'] })));
+await t('host cannot leave own game', assertFails(updateDoc(doc(A, 'games/g1'), { home: arrayRemove('alice'), players: arrayRemove('alice') })));
+await t('bob leaves', assertSucceeds(updateDoc(doc(B, 'games/g1'), { away: arrayRemove('bob'), players: arrayRemove('bob') })));
 await t('city game query', assertSucceeds(getDocs(query(collection(B, 'games'), where('city', '==', 'Austin'), where('when', '>=', Timestamp.fromDate(new Date(Date.now() - 864e5))), orderBy('when')))));
+await t('my games query', assertSucceeds(getDocs(query(collection(A, 'games'), where('players', 'array-contains', 'alice'), orderBy('when', 'desc')))));
 await t('bob cannot delete alice game', assertFails(deleteDoc(doc(B, 'games/g1'))));
-await t('alice deletes own game', assertSucceeds(deleteDoc(doc(A, 'games/g1'))));
-// posts
+await t('alice deletes own open game', assertSucceeds(deleteDoc(doc(A, 'games/g1'))));
+await t('team game by member', assertSucceeds(setDoc(doc(A, 'games/g2'), game('alice', { format: '3v3', homeTeamId: 't1', homeTeamName: 'Eastside', awayTeamId: 't2', awayTeamName: 'North Loop' }))));
+await t('team game for a team you are not on refused', assertFails(setDoc(doc(D, 'games/gx'), game('dave', { homeTeamId: 't1', homeTeamName: 'Eastside' }))));
+await t('carol (Eastside) joins home', assertSucceeds(updateDoc(doc(C, 'games/g2'), { home: arrayUnion('carol'), players: arrayUnion('carol') })));
+await t('dave (no team) cannot join a team side', assertFails(updateDoc(doc(D, 'games/g2'), { away: arrayUnion('dave'), players: arrayUnion('dave') })));
+await t('bob (North Loop) joins away', assertSucceeds(updateDoc(doc(B, 'games/g2'), { away: arrayUnion('bob'), players: arrayUnion('bob') })));
+
+console.log('— Results');
+await admin(db => setDoc(doc(db, 'games/g3'), { ...game('alice', { format: '2v2' }), home: ['alice', 'carol'], away: ['bob'], players: ['alice', 'carol', 'bob'] }));
+const report = (by, side, h, a) => ({ status: 'reported', report: { by, side, home: h, away: a, at: serverTimestamp() } });
+await t('cannot report before start time', assertFails(updateDoc(doc(A, 'games/g3'), report('alice', 'home', 21, 15))));
+await admin(db => updateDoc(doc(db, 'games/g3'), { when: past }));
+await t('outsider cannot report', assertFails(updateDoc(doc(D, 'games/g3'), report('dave', 'home', 21, 0))));
+await t('cannot report for the other side', assertFails(updateDoc(doc(A, 'games/g3'), report('alice', 'away', 21, 15))));
+await t('cannot report as someone else', assertFails(updateDoc(doc(A, 'games/g3'), report('carol', 'home', 21, 15))));
+await t('cannot report straight to final', assertFails(updateDoc(doc(A, 'games/g3'), { status: 'final', report: { by: 'alice', side: 'home', home: 21, away: 15, at: serverTimestamp() } })));
+await t('negative score refused', assertFails(updateDoc(doc(A, 'games/g3'), report('alice', 'home', -1, 15))));
+await t('alice reports 21–15', assertSucceeds(updateDoc(doc(A, 'games/g3'), report('alice', 'home', 21, 15))));
+await t('teammate carol cannot confirm', assertFails(updateDoc(doc(C, 'games/g3'), { status: 'confirmed', responseBy: 'carol' })));
+await t('alice cannot confirm her own report', assertFails(updateDoc(doc(A, 'games/g3'), { status: 'confirmed', responseBy: 'alice' })));
+await t('bob cannot change the score while confirming', assertFails(updateDoc(doc(B, 'games/g3'), { status: 'confirmed', responseBy: 'bob', 'report.home': 0 })));
+await t('nobody can join after a report', assertFails(updateDoc(doc(D, 'games/g3'), { away: arrayUnion('dave'), players: arrayUnion('dave') })));
+await t('bob disputes', assertSucceeds(updateDoc(doc(B, 'games/g3'), { status: 'disputed', responseBy: 'bob' })));
+await t('bob re-reports 21–19', assertSucceeds(updateDoc(doc(B, 'games/g3'), report('bob', 'away', 21, 19))));
+await t('carol confirms', assertSucceeds(updateDoc(doc(C, 'games/g3'), { status: 'confirmed', responseBy: 'carol' })));
+await t('host cannot delete a reported game', assertFails(deleteDoc(doc(A, 'games/g3'))));
+await t('players cannot mark awarded', assertFails(updateDoc(doc(A, 'games/g3'), { awarded: true })));
+
+console.log('— Feed');
 const post = { uid: 'alice', name: 'Alice', city: 'Austin', kind: 'Highlight', caption: 'Hello court', sport: 'Basketball', art: 'ball', mediaUrl: null, mediaType: null, likedBy: [], createdAt: serverTimestamp() };
 await t('alice posts', assertSucceeds(setDoc(doc(A, 'posts/p1'), post)));
 await t('post as someone else refused', assertFails(setDoc(doc(B, 'posts/p2'), post)));
@@ -50,20 +120,38 @@ await t('post with fake likes refused', assertFails(setDoc(doc(A, 'posts/p3'), {
 await t('bob likes', assertSucceeds(updateDoc(doc(B, 'posts/p1'), { likedBy: arrayUnion('bob') })));
 await t('bob cannot add fake likes', assertFails(updateDoc(doc(B, 'posts/p1'), { likedBy: ['bob', 'x', 'y'] })));
 await t('bob cannot edit caption', assertFails(updateDoc(doc(B, 'posts/p1'), { caption: 'pwned' })));
+await t('bob cannot un-hide a post', assertFails(updateDoc(doc(B, 'posts/p1'), { hidden: false })));
 await t('bob comments', assertSucceeds(addDoc(collection(B, 'posts/p1/comments'), { uid: 'bob', name: 'Bob', text: 'Nice', at: serverTimestamp() })));
 await t('comment as alice by bob refused', assertFails(addDoc(collection(B, 'posts/p1/comments'), { uid: 'alice', name: 'Alice', text: 'fake', at: serverTimestamp() })));
 await t('profile posts query', assertSucceeds(getDocs(query(collection(B, 'posts'), where('uid', '==', 'alice'), orderBy('createdAt', 'desc')))));
 await t('bob cannot delete alice post', assertFails(deleteDoc(doc(B, 'posts/p1'))));
-// messages
-const cid = ['alice', 'bob'].sort().join('_');
-await t('alice opens convo', assertSucceeds(setDoc(doc(A, 'conversations', cid), { members: cid.split('_'), names: { alice: 'Alice', bob: 'Bob' }, last: 'yo', lastUid: 'alice', updatedAt: serverTimestamp() }, { merge: true })));
+
+console.log('— Messages and blocking');
+const cid = ['alice', 'bob'].sort().join('_'), convo = (from, last) => ({ members: cid.split('_'), names: { alice: 'Alice', bob: 'Bob' }, last, lastUid: from, updatedAt: serverTimestamp() });
+await t('alice opens convo', assertSucceeds(setDoc(doc(A, 'conversations', cid), convo('alice', 'yo'), { merge: true })));
 await t('alice sends message', assertSucceeds(addDoc(collection(A, 'conversations', cid, 'messages'), { uid: 'alice', text: 'yo', at: serverTimestamp() })));
 await t('bob reads message', assertSucceeds(getDocs(collection(B, 'conversations', cid, 'messages'))));
-await t('bob replies', assertSucceeds(setDoc(doc(B, 'conversations', cid), { members: cid.split('_'), names: { alice: 'Alice', bob: 'Bob' }, last: 'sup', lastUid: 'bob', updatedAt: serverTimestamp() }, { merge: true })));
 await t('carol cannot read their messages', assertFails(getDocs(collection(C, 'conversations', cid, 'messages'))));
 await t('carol cannot read convo', assertFails(getDoc(doc(C, 'conversations', cid))));
 await t('carol cannot post in it', assertFails(addDoc(collection(C, 'conversations', cid, 'messages'), { uid: 'carol', text: 'hi', at: serverTimestamp() })));
 await t('inbox query', assertSucceeds(getDocs(query(collection(B, 'conversations'), where('members', 'array-contains', 'bob'), orderBy('updatedAt', 'desc')))));
 await t('fake convo with wrong members refused', assertFails(setDoc(doc(C, 'conversations', 'alice_carol'), { members: ['alice', 'bob'], last: 'x', lastUid: 'carol', updatedAt: serverTimestamp() })));
+await t('alice blocks bob', assertSucceeds(setDoc(doc(A, 'users/alice/blocked/bob'), { at: serverTimestamp() })));
+await t('bob cannot see alice’s block list', assertFails(getDoc(doc(B, 'users/alice/blocked/bob'))));
+await t('blocked bob cannot message alice', assertFails(addDoc(collection(B, 'conversations', cid, 'messages'), { uid: 'bob', text: 'hey', at: serverTimestamp() })));
+await t('blocked bob cannot bump the convo', assertFails(setDoc(doc(B, 'conversations', cid), convo('bob', 'hey'), { merge: true })));
+await t('blocked bob cannot comment on alice’s post', assertFails(addDoc(collection(B, 'posts/p1/comments'), { uid: 'bob', name: 'Bob', text: 'hey', at: serverTimestamp() })));
+await t('carol can still message alice', assertSucceeds(addDoc(collection(C, 'conversations', 'alice_carol', 'messages'), { uid: 'carol', text: 'hi', at: serverTimestamp() })));
+await t('alice unblocks bob', assertSucceeds(deleteDoc(doc(A, 'users/alice/blocked/bob'))));
+await t('bob can message again', assertSucceeds(addDoc(collection(B, 'conversations', cid, 'messages'), { uid: 'bob', text: 'thanks', at: serverTimestamp() })));
+
+console.log('— Reports');
+const rep = (by, extra = {}) => ({ by, targetType: 'post', targetId: 'p1', targetUid: 'alice', reason: 'Spam or scam', details: '', at: serverTimestamp(), ...extra });
+await t('bob reports a post', assertSucceeds(addDoc(collection(B, 'reports'), rep('bob'))));
+await t('report as someone else refused', assertFails(addDoc(collection(B, 'reports'), rep('carol'))));
+await t('made-up reason refused', assertFails(addDoc(collection(B, 'reports'), rep('bob', { reason: 'I just dont like them' }))));
+await t('reports are private (bob cannot read)', assertFails(getDocs(collection(B, 'reports'))));
+await t('alice cannot read reports about her', assertFails(getDocs(collection(A, 'reports'))));
+
 console.log(`\n${pass} passed, ${failN} failed`);
 await env.cleanup(); process.exit(failN ? 1 : 0);

@@ -1,5 +1,6 @@
 # Checks the security rules, then publishes the site to Firebase
 # every time a change lands on the main branch. Setup: README "Automatic publishing".
+# Server code in functions/ is published by hand: firebase deploy --only functions
 name: Test and publish
 
 on:
@@ -21,8 +22,10 @@ jobs:
           distribution: temurin
           java-version: 21
       - run: npm install --no-audit --no-fund
+      - run: npm install --no-audit --no-fund
+        working-directory: functions
       - run: node --check public/app.js
-      - run: npm run test:rules
+      - run: npm test
 
   deploy:
     needs: test

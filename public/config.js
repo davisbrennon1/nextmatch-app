@@ -19,7 +19,10 @@ export const FEATURES = {
   // Show "Continue with Apple". Needs an Apple Developer account first (README step 5).
   apple: false,
   // Let people attach photos and videos to posts. Needs Firebase Storage (README step 6).
-  uploads: false
+  uploads: false,
+  // Push notifications on phones and computers. Paste your Web Push key here (README step 8).
+  // Leave empty to keep only the in-app notification bell.
+  pushKey: ""
 };
 
 // Cities people can pick. Games and players are grouped by city.
