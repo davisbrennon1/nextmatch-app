@@ -39,6 +39,13 @@ async function sideLabel(g, side) {
   const n = await nameOf(ids[0]);
   return ids.length > 1 ? `${n} +${ids.length - 1}` : n;
 }
+// Seasons follow the calendar: Winter (Dec–Feb), Spring (Mar–May), Summer (Jun–Aug), Fall (Sep–Nov).
+function seasonKey(date) {
+  const d = new Date(date.toLocaleString('en-US', { timeZone: TZ })), m = d.getMonth(), y = d.getFullYear();
+  if (m === 11) return `${y}-winter`;
+  if (m < 2) return `${y - 1}-winter`;
+  return `${y}-${m < 5 ? 'spring' : m < 8 ? 'summer' : 'fall'}`;
+}
 function when(g) { return g.when.toDate().toLocaleString('en-US', { timeZone: TZ, weekday: 'short', hour: 'numeric', minute: '2-digit' }); }
 
 // Push to every phone/browser a player turned notifications on for. Never throws.
@@ -77,10 +84,15 @@ async function awardResult(ref) {
     const teamRefs = ['home', 'away'].map(s => g[s + 'TeamId'] ? db().doc(`teams/${g[s + 'TeamId']}`) : null);
     const users = await Promise.all(userRefs.map(r => tx.get(r)));
     const teams = await Promise.all(teamRefs.map(r => r ? tx.get(r) : null));
+    const season = seasonKey(g.when.toDate());
     const record = side => winner ? { [winner === side ? 'wins' : 'losses']: FieldValue.increment(1) } : {};
     users.forEach(u => {
       const p = players[u.id]; if (!u.exists || !p) return;
-      tx.update(u.ref, { rp: FieldValue.increment(p.earned), ...(p.counted ? { scored: FieldValue.increment(p.scored) } : {}), ...record(p.side) });
+      // Season totals restart when a game lands in a new season.
+      const d = u.data(), fresh = d.seasonKey !== season, won = winner === p.side, lost = winner && !won;
+      const seasonal = fresh ? { seasonKey: season, seasonRp: p.earned, seasonWins: won ? 1 : 0, seasonLosses: lost ? 1 : 0 }
+        : { seasonRp: FieldValue.increment(p.earned), ...(won ? { seasonWins: FieldValue.increment(1) } : {}), ...(lost ? { seasonLosses: FieldValue.increment(1) } : {}) };
+      tx.update(u.ref, { rp: FieldValue.increment(p.earned), ...(p.counted ? { scored: FieldValue.increment(p.scored) } : {}), ...record(p.side), ...seasonal });
     });
     teams.forEach((t, i) => { const side = i === 0 ? 'home' : 'away'; if (t?.exists) tx.update(t.ref, { rp: FieldValue.increment(earned[side]), ...record(side) }) });
     const final = { home: hs, away: as, winner, pts: winner ? WIN_POINTS : 0, earned, players: Object.fromEntries(Object.entries(players).map(([u, p]) => [u, { scored: p.scored, earned: p.earned }])) };
@@ -154,4 +166,4 @@ async function sendReminders(now = new Date()) {
   return sent;
 }
 
-module.exports = { WIN_POINTS, earnedFor, splitResult, awardResult, onGameUpdated, onDirectMessage, onTeamMessage, onTeamRequest, onReport, sendReminders, notify };
+module.exports = { WIN_POINTS, earnedFor, splitResult, seasonKey, awardResult, onGameUpdated, onDirectMessage, onTeamMessage, onTeamRequest, onReport, sendReminders, notify };

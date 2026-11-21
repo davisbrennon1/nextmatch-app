@@ -131,3 +131,9 @@
 @media (max-width:959px){.topbar .city{font-size:13px;gap:4px;padding:6px 10px}}
 @media (max-width:400px){.topbar .wordmark{font-size:0;gap:0}}
 .city-opt em{font-style:normal;font-weight:500;color:var(--muted)}
+/* Rankings filters */
+.rank-filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.rank-filters .seg{margin:0;flex:1;min-width:240px}
+.seg-sm button{padding:8px 12px;font-size:13px;overflow:hidden;text-overflow:ellipsis}
+.lb .rk-gap{text-align:center;color:var(--muted);letter-spacing:3px;padding:4px 0;border-top:1px solid var(--line)}
+@media (max-width:560px){.rank-filters .seg{min-width:0;flex-basis:100%}}

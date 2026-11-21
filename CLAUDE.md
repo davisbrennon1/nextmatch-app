@@ -33,7 +33,7 @@ The owner asked to take workouts out for now; flip it to `true` to bring them ba
 ## Checks before saving to GitHub
 
 - `node --check public/app.js`
-- `npm test` runs 115 security-rule checks and 25 server-code checks (needs Java and
+- `npm test` runs 118 security-rule checks and 28 server-code checks (needs Java and
   `npm install` in the root and in `functions/`). GitHub Actions runs the same on every push.
 - Pushing to `main` publishes the live site once the owner has finished the README's
   "Automatic publishing" setup. Server code is published by hand: `firebase deploy --only functions`.

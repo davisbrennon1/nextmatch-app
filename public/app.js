@@ -88,12 +88,25 @@ const S = {
   uid: null, me: null, tab: 'today', play: 'games', feed: 'all', sport: 'All', fmt: 'All',
   games: [], posts: [], players: [], convos: [], following: new Set(), workouts: [],
   thread: null, msgs: [], profile: null, users: {}, profilePosts: {}, loaded: {},
-  myGames: [], teams: [], myTeams: [], notifs: [], blocked: new Set(), team: null, teamMsgs: [], teamReqs: [], myReq: {}, gameCache: {}, teamCache: {}
+  myGames: [], world: {}, rankScope: 'city', rankPeriod: 'season', teams: [], myTeams: [], notifs: [], blocked: new Set(), team: null, teamMsgs: [], teamReqs: [], myReq: {}, gameCache: {}, teamCache: {}
 };
-let subs = [], citySubs = [], threadSub = null, commentSub = null, teamSubs = [], sheetSub = null;
-const unsubAll = () => { [...subs, ...citySubs, ...teamSubs].forEach(u => u()); subs = []; citySubs = []; teamSubs = []; threadSub?.(); threadSub = null; sheetSub?.(); sheetSub = null };
+let subs = [], citySubs = [], threadSub = null, commentSub = null, teamSubs = [], sheetSub = null, worldSubs = {};
+const unsubAll = () => { [...subs, ...citySubs, ...teamSubs, ...Object.values(worldSubs)].forEach(u => u()); worldSubs = {}; S.world = {}; subs = []; citySubs = []; teamSubs = []; threadSub?.(); threadSub = null; sheetSub?.(); sheetSub = null };
 const myName = () => S.me?.name || 'Player';
 const myCity = () => S.me?.city || 'Austin, TX';
+
+/* ───────── Seasons: Winter (Dec–Feb), Spring (Mar–May), Summer (Jun–Aug), Fall (Sep–Nov) ───────── */
+function seasonOf(d = new Date()) {
+  const m = d.getMonth(), y = d.getFullYear(), yy = n => String(n).slice(2);
+  if (m === 11 || m < 2) { const start = m === 11 ? y : y - 1; return { key: `${start}-winter`, label: `Winter ${start}–${yy(start + 1)}`, start: new Date(start, 11, 1), end: new Date(start + 1, 2, 1) } }
+  const name = m < 5 ? 'spring' : m < 8 ? 'summer' : 'fall', sm = { spring: 2, summer: 5, fall: 8 }[name];
+  return { key: `${y}-${name}`, label: `${name[0].toUpperCase() + name.slice(1)} ${y}`, start: new Date(y, sm, 1), end: new Date(y, sm + 3, 1) };
+}
+const SEASON = seasonOf();
+// A player's points and record for "this season" or "all-time".
+const statsFor = (p, period) => period === 'season'
+  ? (p.seasonKey === SEASON.key ? { rp: p.seasonRp || 0, w: p.seasonWins || 0, l: p.seasonLosses || 0 } : { rp: 0, w: 0, l: 0 })
+  : { rp: p.rp || 0, w: p.wins || 0, l: p.losses || 0 };
 
 /* ───────── Finding a city (every U.S. city and town, stored as "Austin, TX") ───────── */
 const STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
@@ -506,7 +519,7 @@ function postGame(vs = '', vsTeam = '') {
 /* ================= Today ================= */
 function seasonCard() {
   const rp = S.me.rp || 0, t = tierOf(rp), pct = t.next ? Math.round((rp - t.min) / (t.next[1] - t.min) * 100) : 100, games = (S.me.wins || 0) + (S.me.losses || 0);
-  return `<section class="card season"><div class="season-top"><div><div class="label">Fall season · ${esc(myCity())}</div><div class="big" style="margin-top:8px">${rp.toLocaleString()}<small>player points</small></div></div><span class="tier">★ ${t.name}</span></div><div><div class="bar"><i style="width:${pct}%"></i></div><p class="muted" style="font-size:13px;margin-top:8px">${t.next ? (t.next[1] - rp).toLocaleString() + ' points to ' + t.next[0] + '.' : 'Top tier reached.'} Win confirmed games to earn points.</p></div><div class="kv"><div><b>${S.me.wins || 0}–${S.me.losses || 0}</b><span>Record</span></div><div><b>${S.players.length ? '#' + (S.players.filter(p => (p.rp || 0) > rp).length + 1) : '—'}</b><span>City rank</span></div><div><b>${games ? Math.round((S.me.wins || 0) / games * 100) + '%' : '—'}</b><span>Win rate</span></div></div></section>`;
+  return `<section class="card season"><div class="season-top"><div><div class="label">${SEASON.label} · ${esc(myCity())}</div><div class="big" style="margin-top:8px">${rp.toLocaleString()}<small>player points</small></div></div><span class="tier">★ ${t.name}</span></div><div><div class="bar"><i style="width:${pct}%"></i></div><p class="muted" style="font-size:13px;margin-top:8px">${t.next ? (t.next[1] - rp).toLocaleString() + ' points to ' + t.next[0] + '.' : 'Top tier reached.'} Win confirmed games to earn points.</p></div><div class="kv"><div><b>${S.me.wins || 0}–${S.me.losses || 0}</b><span>Record</span></div><div><b>${S.players.length ? '#' + (S.players.filter(p => (p.rp || 0) > rp).length + 1) : '—'}</b><span>City rank</span></div><div><b>${statsFor(S.me, 'season').rp.toLocaleString()}</b><span>Season pts</span></div></div></section>`;
 }
 function weekCard() {
   const wk = weekKey(), thisWeek = S.workouts.filter(w => w.week === wk), dow = (new Date().getDay() + 6) % 7;
@@ -555,9 +568,9 @@ function rankChart() {
 
 /* ================= Play ================= */
 function play() {
-  const segs = [['games', 'Games'], ['teams', 'Teams'], ['players', 'Players'], ['tournaments', 'Tournaments']];
+  const segs = [['games', 'Games'], ['players', 'Rankings'], ['teams', 'Teams'], ['tournaments', 'Tournaments']];
   const btn = S.play === 'teams' ? '<button class="btn btn-primary" onclick="createTeam()">＋ Create a team</button>' : '<button class="btn btn-primary" onclick="postGame()">＋ Post a game</button>';
-  return `<div class="greet"><div><div class="label">${esc(myCity())} · Fall season</div><h1 style="margin-top:6px">Play</h1></div>${btn}</div><div class="seg" role="tablist">${segs.map(([k, l]) => `<button role="tab" aria-selected="${S.play === k}" class="${S.play === k ? 'on' : ''}" onclick="S.play='${k}';render()">${l}</button>`).join('')}</div>${{ games: playGames, teams: playTeams, players: playPlayers, tournaments: playTours }[S.play]()}`;
+  return `<div class="greet"><div><div class="label">${esc(myCity())} · ${SEASON.label}</div><h1 style="margin-top:6px">Play</h1></div>${btn}</div><div class="seg" role="tablist">${segs.map(([k, l]) => `<button role="tab" aria-selected="${S.play === k}" class="${S.play === k ? 'on' : ''}" onclick="S.play='${k}';render()">${l}</button>`).join('')}</div>${{ games: playGames, teams: playTeams, players: playPlayers, tournaments: playTours }[S.play]()}`;
 }
 function playGames() {
   if (!S.loaded.games) return '<div class="loading">Loading games…</div>';
@@ -573,10 +586,27 @@ function playTeams() {
   const others = S.teams.filter(t => !myTeamIds().has(t.id) && ok(t.captainUid)).sort((a, b) => (b.rp || 0) - (a.rp || 0));
   return `${S.myTeams.length ? `<div class="label" style="margin-bottom:8px">Your teams</div><div class="lb" style="margin-bottom:20px">${S.myTeams.map(teamRow).join('')}</div>` : ''}<div class="label" style="margin-bottom:8px">Teams in ${esc(myCity())}</div><div class="lb">${others.map(teamRow).join('') || '<div class="empty" style="border:0">No other teams here yet. Start one and invite your crew.</div>'}</div>`;
 }
+// Rankings: my city or the whole world, this season or all-time.
+function worldList(period) {
+  if (!worldSubs[period]) {
+    const q = period === 'season' ? query(collection(db, 'users'), where('seasonKey', '==', SEASON.key), orderBy('seasonRp', 'desc'), limit(100)) : query(collection(db, 'users'), orderBy('rp', 'desc'), limit(100));
+    worldSubs[period] = onSnapshot(q, snap => { S.world[period] = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderSoon() }, fail('world rankings'));
+  }
+  return S.world[period];
+}
 function playPlayers() {
-  if (!S.loaded.players) return '<div class="loading">Loading players…</div>';
-  const list = S.players.filter(p => ok(p.id)).sort((a, b) => (b.rp || 0) - (a.rp || 0) || a.name.localeCompare(b.name));
-  return `<div class="lb">${list.map((p, i) => `<button class="lb-row ${p.id === S.uid ? 'me' : ''}" onclick="openProfile('${p.id}')"><span class="n">${i + 1}</span>${avatar(p.name, 'sm')}<span style="min-width:0"><strong>${esc(p.name)}${p.id === S.uid ? ' · You' : ''}</strong><small>${esc((p.sports || []).join(' · '))} · ${tierOf(p.rp || 0).name}</small></span><span class="pts">${(p.rp || 0).toLocaleString()}<small>${p.wins || 0}–${p.losses || 0}</small></span></button>`).join('') || '<div class="empty">No players here yet.</div>'}</div><p class="muted" style="font-size:13px;margin-top:12px">${list.length} player${list.length === 1 ? '' : 's'} in ${esc(myCity())}, ranked by points from confirmed results. Points are free and have no cash value.</p>`;
+  const scope = S.rankScope, period = S.rankPeriod, md = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const filters = `<div class="rank-filters"><div class="seg seg-sm" role="group" aria-label="Where">${[['city', '⌖ ' + myCity()], ['world', '🌎 World']].map(([k, l]) => `<button class="${scope === k ? 'on' : ''}" aria-pressed="${scope === k}" onclick="S.rankScope='${k}';render()">${esc(l)}</button>`).join('')}</div><div class="seg seg-sm" role="group" aria-label="When">${[['season', SEASON.label], ['all', 'All-time']].map(([k, l]) => `<button class="${period === k ? 'on' : ''}" aria-pressed="${period === k}" onclick="S.rankPeriod='${k}';render()">${l}</button>`).join('')}</div></div>`;
+  const src = scope === 'city' ? (S.loaded.players ? S.players : null) : worldList(period);
+  if (!src) return filters + '<div class="loading">Loading rankings…</div>';
+  const rows = src.filter(p => ok(p.id)).map(p => ({ p, s: statsFor(p, period) })).filter(x => scope === 'city' || x.s.rp > 0 || x.p.id === S.uid)
+    .sort((a, b) => b.s.rp - a.s.rp || a.p.name.localeCompare(b.p.name));
+  const row = ({ p, s }, i) => `<button class="lb-row ${p.id === S.uid ? 'me' : ''}" onclick="openProfile('${p.id}')"><span class="n">${i === null ? '—' : i + 1}</span>${avatar(p.name, 'sm')}<span style="min-width:0"><strong>${esc(p.name)}${p.id === S.uid ? ' · You' : ''}</strong><small>${scope === 'world' ? esc(p.city || '') + ' · ' : ''}${tierOf(p.rp || 0).name}</small></span><span class="pts">${s.rp.toLocaleString()}<small>${s.w}–${s.l}</small></span></button>`;
+  const meIn = rows.some(x => x.p.id === S.uid), me = { p: { ...S.me, id: S.uid }, s: statsFor(S.me, period) };
+  const extra = !meIn ? `<div class="rk-gap" aria-hidden="true">···</div>${row(me, null)}` : '';
+  const note = period === 'season' ? `${SEASON.label} runs ${md(SEASON.start)} – ${md(new Date(SEASON.end - 864e5))}. Season points start over ${md(SEASON.end)}.` : 'All points since joining.';
+  const where = scope === 'city' ? `in ${esc(myCity())}` : `worldwide${rows.length >= 100 ? ' (top 100)' : ''}`;
+  return `${filters}<div class="lb">${rows.map(row).join('') || `<div class="empty" style="border:0">No one has ${period === 'season' ? 'earned points this season' : 'earned points'} yet. Win a confirmed game to get on the board.</div>`}${extra}</div><p class="muted" style="font-size:13px;margin-top:12px">${rows.length} player${rows.length === 1 ? '' : 's'} ${where}, ranked by player points. ${note}${!meIn && scope === 'world' ? ' You’re not in the top 100 yet.' : ''}</p>`;
 }
 function playTours() {
   const interested = new Set(S.me.tournamentInterest || []);

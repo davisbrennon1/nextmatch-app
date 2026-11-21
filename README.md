@@ -214,6 +214,14 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
    that side gets the team score instead and career totals aren't changed.
 5. A disputed score awards nothing. Players talk it out and report again.
 
+## Rankings and seasons
+
+Play → **Rankings** lets players switch between **their city** and the **whole world**, and
+between **this season** and **all-time**. Seasons follow the calendar: Winter (Dec–Feb),
+Spring (Mar–May), Summer (Jun–Aug), Fall (Sep–Nov). Points from a game count toward the season
+the game was played in, and season totals start over when a new season begins. All-time points
+never reset. The world view shows the top 100.
+
 ## Safety: reports and blocks
 
 - Players can report a player, post, comment, game or team from its **⋯** menu.
@@ -294,10 +302,10 @@ If a security test fails, nothing is published.
 
 ## Automated checks (for developers)
 
-- **115 security-rule checks**: for example, nobody can give themselves points, confirm
+- **118 security-rule checks**: for example, nobody can give themselves points, confirm
   their own side's score, join a team without the captain's approval, read another
   team's chat or other people's messages, or message someone who blocked them.
-- **25 server-code checks**: points awarded once and only to winners, ties and disputes,
+- **28 server-code checks**: points awarded once and only to winners, ties and disputes,
   team records, notifications, reminders, and auto-hiding reported posts.
 
 With Java installed:

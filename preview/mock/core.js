@@ -165,11 +165,18 @@ function splitResult(g) {
   }
   return { score, winner, players, earned: { home: earnedFor(score.home, winner === 'home'), away: earnedFor(score.away, winner === 'away') } };
 }
+function seasonKey(d) { const m = d.getMonth(), y = d.getFullYear(); return m === 11 ? `${y}-winter` : m < 2 ? `${y - 1}-winter` : `${y}-${m < 5 ? 'spring' : m < 8 ? 'summer' : 'fall'}` }
 function award(path) {
   const g = get(path); if (!g || g.status !== 'confirmed' || g.awarded) return null;
   const { winner, players, earned } = splitResult(g);
   const record = (d, side) => winner ? (winner === side ? { wins: (d.wins || 0) + 1 } : { losses: (d.losses || 0) + 1 }) : {};
-  Object.entries(players).forEach(([u, p]) => { const d = get('users/' + u); if (d) put('users/' + u, { ...d, rp: (d.rp || 0) + p.earned, scored: (d.scored || 0) + (p.counted ? p.scored : 0), ...record(d, p.side) }) });
+  const season = seasonKey(g.when.toDate());
+  Object.entries(players).forEach(([u, p]) => {
+    const d = get('users/' + u); if (!d) return;
+    const fresh = d.seasonKey !== season, won = winner === p.side, lost = !!winner && !won;
+    put('users/' + u, { ...d, rp: (d.rp || 0) + p.earned, scored: (d.scored || 0) + (p.counted ? p.scored : 0), ...record(d, p.side), seasonKey: season,
+      seasonRp: (fresh ? 0 : d.seasonRp || 0) + p.earned, seasonWins: (fresh ? 0 : d.seasonWins || 0) + (won ? 1 : 0), seasonLosses: (fresh ? 0 : d.seasonLosses || 0) + (lost ? 1 : 0) });
+  });
   ['home', 'away'].forEach(side => { const id = g[side + 'TeamId'], t = id && get('teams/' + id); if (t) put('teams/' + id, { ...t, rp: (t.rp || 0) + earned[side], ...record(t, side) }) });
   put(path, { ...g, status: 'final', awarded: true, final: { home: g.report.home, away: g.report.away, winner, pts: winner ? WIN_POINTS : 0, earned, players: Object.fromEntries(Object.entries(players).map(([u, p]) => [u, { scored: p.scored, earned: p.earned }])) }, finalAt: Timestamp.now() });
   return { winner, earned, players };
@@ -230,10 +237,15 @@ function seed() {
     chris: ['Chris Evans', ['Flag football', 'Basketball'], 1180, 10, 6], tyler: ['Tyler Brooks', ['Basketball'], 960, 8, 6], andre: ['Andre Johnson', ['Flag football'], 1410, 11, 7],
     riley: ['Riley Ortiz', ['Flag football'], 1560, 13, 4], sam: ['Sam Patel', ['Basketball'], 640, 5, 5],
     kendra: ['Kendra Reed', ['Basketball'], 1720, 15, 5, 'Dallas, TX'], jaylen: ['Jaylen Brooks', ['Basketball'], 1330, 11, 6, 'Dallas, TX'],
-    omar: ['Omar Haddad', ['Flag football'], 1490, 12, 5, 'Houston, TX'], lucia: ['Lucia Flores', ['Basketball', 'Flag football'], 880, 7, 6, 'Houston, TX']
+    omar: ['Omar Haddad', ['Flag football'], 1490, 12, 5, 'Houston, TX'], lucia: ['Lucia Flores', ['Basketball', 'Flag football'], 880, 7, 6, 'Houston, TX'],
+    dre: ['Dre Mitchell', ['Basketball'], 3920, 33, 8, 'Los Angeles, CA'], nia: ['Nia Thompson', ['Basketball'], 3410, 29, 9, 'Brooklyn, NY'],
+    caleb: ['Caleb Wright', ['Flag football'], 2960, 24, 7, 'Chicago, IL'], sofia: ['Sofia Ramirez', ['Basketball'], 2705, 22, 10, 'Miami, FL'],
+    malik: ['Malik Greene', ['Basketball'], 2350, 19, 9, 'Atlanta, GA'], hana: ['Hana Kim', ['Basketball', 'Flag football'], 1890, 15, 8, 'Seattle, WA']
   };
   for (const [id, [name, sports, rp, wins, losses, city = 'Austin, TX']] of Object.entries(users)) {
-    put('users/' + id, { name, city, sports, rp, wins, losses, scored: Math.round(rp * 0.31), adult: true, createdAt: ts(now - 40 * D) });
+    // This season: about a third of all-time, so the two rankings differ.
+    const sp = Math.round(rp * [0.34, 0.41, 0.22, 0.47, 0.29, 0.38, 0.25, 0.44][name.length % 8]), sw = Math.max(1, Math.round(wins / 3)), sl = Math.round(losses / 3);
+    put('users/' + id, { name, city, sports, rp, wins, losses, scored: Math.round(rp * 0.31), seasonKey: seasonKey(new Date(now)), seasonRp: sp, seasonWins: sw, seasonLosses: sl, adult: true, createdAt: ts(now - 40 * D) });
     accounts.set((id === 'you' ? 'jordan' : id) + '@example.com', { uid: id, password: '' });
   }
   const team = (id, name, sport, captainUid, members, rp, wins, losses) => put('teams/' + id, { name, sport, city: 'Austin, TX', captainUid, members, rp, wins, losses, createdAt: ts(now - 30 * D) });

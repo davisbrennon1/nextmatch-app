@@ -48,6 +48,7 @@ check('game finalized with each player’s points', fin?.final?.winner === 'home
 const [a, c, b] = [await read('users/alice'), await read('users/carol'), await read('users/bob')];
 check('each winner gets 100 + their own points (114 and 107)', a.rp === 114 && a.wins === 1 && c.rp === 107 && c.wins === 1, JSON.stringify({ a, c }));
 check('points scored are added to each player’s career total', a.scored === 14 && c.scored === 7, JSON.stringify({ a: a.scored, c: c.scored }));
+check('season totals start with this game', a.seasonRp === 114 && a.seasonWins === 1 && a.seasonLosses === 0 && /^\d{4}-(winter|spring|summer|fall)$/.test(a.seasonKey) && b.seasonRp === 17 && b.seasonLosses === 1, JSON.stringify({ a: [a.seasonKey, a.seasonRp, a.seasonWins], b: [b.seasonRp, b.seasonLosses] }));
 check('loser gets their own points (17) and a loss', b.rp === 17 && b.scored === 17 && b.losses === 1 && b.wins === 0, JSON.stringify(b));
 const [t1, t2] = [await read('teams/t1'), await read('teams/t2')];
 check('winning team gets 121 and a win', t1.rp === 121 && t1.wins === 1, JSON.stringify(t1));
@@ -73,6 +74,7 @@ check('tie finalizes with no winner', tie?.final?.winner === null && tie.final.p
 const [dv, er] = [await read('users/dave'), await read('users/erin')];
 check('tie changes nobody’s record', dv.wins === 0 && dv.losses === 0 && er.wins === 0 && er.losses === 0);
 check('tie gives each player their scored points (20)', dv.rp === 20 && er.rp === 20, JSON.stringify({ dv: dv.rp, er: er.rp }));
+await admin(db => updateDoc(doc(db, 'users/erin'), { seasonKey: '1999-fall', seasonRp: 999, seasonWins: 9, seasonLosses: 9 }));
 
 console.log('— Per-player points that don’t add up');
 const daveScoredBefore = (await read('users/dave')).scored || 0;
@@ -81,6 +83,9 @@ await updateDoc(doc(as('dave'), 'games/g4'), { status: 'reported', report: { by:
 await updateDoc(doc(as('bob'), 'games/g4'), { status: 'confirmed', responseBy: 'bob' });
 const g4 = await waitFor(async () => { const g = await read('games/g4'); return g.status === 'final' && g });
 check('a side whose points don’t add up falls back to the side score', g4?.final?.players?.dave?.scored === 21 && g4.final.players.erin.earned === 121 && g4.final.players.bob.scored === 10, JSON.stringify(g4?.final?.players));
+const er4 = await read('users/erin'), dv4 = await read('users/dave');
+check('an old season’s totals restart with the new game', er4.seasonKey !== '1999-fall' && er4.seasonRp === 121 && er4.seasonWins === 1 && er4.seasonLosses === 0, JSON.stringify([er4.seasonKey, er4.seasonRp, er4.seasonWins]));
+check('a second game this season adds to the season total', dv4.seasonRp === 20 + 121 && dv4.seasonWins === 1, JSON.stringify([dv4.seasonRp, dv4.seasonWins]));
 check('fallback points are not added to career totals', ((await read('users/dave')).scored || 0) === daveScoredBefore, JSON.stringify(await read('users/dave')));
 
 console.log('— Reported posts');

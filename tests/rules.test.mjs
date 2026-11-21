@@ -1,6 +1,6 @@
 // Security-rule checks. Run with: npm run test:rules (needs Java for the Firebase emulator).
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, getDocs, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, limit, getDocs, serverTimestamp, Timestamp, arrayUnion, arrayRemove, writeBatch } from 'firebase/firestore';
 import fs from 'fs';
 
 const env = await initializeTestEnvironment({ projectId: 'demo-nextmatch', firestore: { rules: fs.readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8'), host: '127.0.0.1', port: 8080 } });
@@ -104,6 +104,9 @@ await t('negative score refused', assertFails(updateDoc(doc(A, 'games/g3'), repo
 await t('report listing an outsider’s points refused', assertFails(updateDoc(doc(A, 'games/g3'), { status: 'reported', report: { by: 'alice', side: 'home', home: 21, away: 15, players: { alice: 14, carol: 7, dave: 15 }, at: serverTimestamp() } })));
 await t('alice reports 21–15 with each player’s points', assertSucceeds(updateDoc(doc(A, 'games/g3'), { status: 'reported', report: { by: 'alice', side: 'home', home: 21, away: 15, players: { alice: 14, carol: 7, bob: 15 }, at: serverTimestamp() } })));
 await t('players cannot edit their own points total', assertFails(updateDoc(doc(A, 'users/alice'), { scored: 500 })));
+await t('players cannot edit their season points', assertFails(updateDoc(doc(A, 'users/alice'), { seasonKey: '2026-fall', seasonRp: 5000 })));
+await t('world season rankings query', assertSucceeds(getDocs(query(collection(B, 'users'), where('seasonKey', '==', '2026-fall'), orderBy('seasonRp', 'desc'), limit(100)))));
+await t('world all-time rankings query', assertSucceeds(getDocs(query(collection(B, 'users'), orderBy('rp', 'desc'), limit(100)))));
 await t('teammate carol cannot confirm', assertFails(updateDoc(doc(C, 'games/g3'), { status: 'confirmed', responseBy: 'carol' })));
 await t('alice cannot confirm her own report', assertFails(updateDoc(doc(A, 'games/g3'), { status: 'confirmed', responseBy: 'alice' })));
 await t('bob cannot change the score while confirming', assertFails(updateDoc(doc(B, 'games/g3'), { status: 'confirmed', responseBy: 'bob', 'report.home': 0 })));
