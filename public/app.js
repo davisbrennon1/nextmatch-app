@@ -505,37 +505,65 @@ function loadVenues(city) {
   })().catch(e => { delete VENUES[city]; throw e });
 }
 const VENUE_ICON = { 'Basketball court': '◉', Field: '▭', 'Sports court': '◎', 'Rec center': '⌂', Park: '♣' };
+const milesBetween = (a, b, c, d) => { const r = Math.PI / 180, x = (d - b) * r * Math.cos((a + c) / 2 * r), y = (c - a) * r; return Math.sqrt(x * x + y * y) * 3959 };
 function bindVenueField(id, city, sportOf) {
-  const input = document.getElementById(id), list = document.getElementById(id + '-list'), hint = document.getElementById(id + '-hint');
-  let venues = null, chosen = null;
-  const fits = v => v.sports.includes(sportOf());
+  const input = document.getElementById(id), list = document.getElementById(id + '-list'), hint = document.getElementById(id + '-hint'), quick = document.getElementById(id + '-quick');
+  let venues = [], loaded = false, chosen = null;
+  // Places people already picked for games in this city come first, so something always shows.
+  const usedNames = () => new Set(S.games.filter(g => g.city === city).map(g => norm(g.venue)));
+  const pool = () => {
+    const used = usedNames(), known = new Set(venues.map(v => norm(v.name)));
+    const extra = S.games.filter(g => g.city === city && g.venue && !known.has(norm(g.venue)) && known.add(norm(g.venue)))
+      .map(g => ({ name: g.venue, kind: 'Used for games', sports: ['Basketball', 'Flag football'], park: '', address: '', lat: g.venueLat, lng: g.venueLng, count: 1, custom: true }));
+    return [...venues, ...extra].map(v => ({ v, used: used.has(norm(v.name)) }));
+  };
+  const ranked = q => {
+    const k = norm(q), words = k.split(' ').filter(Boolean), sport = sportOf(), kindRank = { 'Basketball court': 0, Field: 0, 'Sports court': 1, 'Rec center': 2, Park: 3, 'Used for games': 1 };
+    return pool().filter(({ v }) => v.sports.includes(sport) && (!words.length || words.every(w => norm(`${v.name} ${v.park} ${v.address} ${v.kind}`).includes(w))))
+      .map(x => ({ ...x, score: kindRank[x.v.kind] - (x.used ? 2 : 0) - (k && norm(x.v.name).startsWith(k) ? 3 : 0) + (x.v.mi ?? 50) / 100 }))
+      .sort((a, b) => a.score - b.score).map(x => x);
+  };
+  const detail = ({ v, used }) => [used ? 'Games here' : v.kind, v.park, v.count > 1 ? v.count + (v.kind === 'Field' ? ' fields' : ' courts') : '', v.lit ? 'Lights' : '', v.mi != null ? (v.mi < 10 ? v.mi.toFixed(1) : Math.round(v.mi)) + ' mi from center' : ''].filter(Boolean).join(' · ');
   const show = () => {
-    if (!venues || document.activeElement !== input) return;
-    const k = norm(input.value), words = k.split(' ').filter(Boolean);
-    const r = venues.filter(fits).filter(v => !words.length || words.every(w => norm(`${v.name} ${v.park} ${v.address} ${v.kind}`).includes(w))).slice(0, 8);
-    list.innerHTML = r.length ? r.map(v => `<button type="button" class="city-opt venue-opt" role="option" data-i="${venues.indexOf(v)}"><span><i aria-hidden="true">${VENUE_ICON[v.kind] || '•'}</i>${esc(v.name)}</span><small>${esc([v.kind, v.park, v.count > 1 ? v.count + (v.kind === 'Field' ? ' fields' : ' courts') : '', v.lit ? 'Lights' : ''].filter(Boolean).join(' · '))}</small></button>`).join('')
-      : `<p class="muted">${words.length ? `No match in ${esc(city)}. Keep typing to use your own place.` : `No ${esc(sportOf().toLowerCase())} spots found nearby. Type the place.`}</p>`;
+    if (document.activeElement !== input) return;
+    const r = ranked(input.value).slice(0, 8);
+    list.innerHTML = r.length ? r.map(x => `<button type="button" class="city-opt venue-opt" role="option" data-name="${esc(x.v.name)}"><span><i aria-hidden="true">${VENUE_ICON[x.v.kind] || '★'}</i>${esc(x.v.name)}</span><small>${esc(detail(x))}</small></button>`).join('')
+      : `<p class="muted">${!loaded ? 'Loading places…' : input.value.trim() ? `No match in ${esc(city)}. Keep typing to use your own place.` : `No ${esc(sportOf().toLowerCase())} spots found nearby. Type the place.`}</p>`;
     list.hidden = false; input.setAttribute('aria-expanded', 'true');
   };
-  const pick = v => { chosen = v; input.value = v.name; list.hidden = true; input.setAttribute('aria-expanded', 'false'); hint.textContent = `${v.kind}${v.park ? ' in ' + v.park : ''}${v.address ? ' · ' + v.address : ''}. Directions will point here.` };
+  const drawQuick = () => {
+    const r = ranked('').slice(0, 6);
+    quick.innerHTML = r.map(x => `<button type="button" class="chip ${chosen && chosen.name === x.v.name ? 'on' : ''}" data-name="${esc(x.v.name)}">${VENUE_ICON[x.v.kind] || '★'} ${esc(x.v.name)}</button>`).join('');
+  };
+  const find = name => pool().find(x => x.v.name === name)?.v;
+  const pick = name => {
+    const v = find(name); if (!v) return;
+    chosen = Number.isFinite(v.lat) ? v : null; input.value = v.name; list.hidden = true; input.setAttribute('aria-expanded', 'false');
+    hint.textContent = v.custom ? 'A place used for other games here.' : `${v.kind}${v.park ? ' in ' + v.park : ''}${v.address ? ' · ' + v.address : ''}. Directions will point here.`;
+    drawQuick();
+  };
   input.addEventListener('focus', show);
-  input.addEventListener('input', () => { if (chosen && input.value !== chosen.name) chosen = null; show() });
-  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !list.hidden) { const f = list.querySelector('.venue-opt'); if (f) { e.preventDefault(); pick(venues[+f.dataset.i]) } } if (e.key === 'Escape') list.hidden = true });
+  input.addEventListener('input', () => { if (chosen && input.value !== chosen.name) chosen = null; show(); drawQuick() });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !list.hidden) { const f = list.querySelector('.venue-opt'); if (f && input.value.trim()) { e.preventDefault(); pick(f.dataset.name) } } if (e.key === 'Escape') list.hidden = true });
   input.addEventListener('blur', () => setTimeout(() => { list.hidden = true }, 150));
   list.addEventListener('mousedown', e => e.preventDefault());
-  list.addEventListener('click', e => { const b = e.target.closest('.venue-opt'); if (b) pick(venues[+b.dataset.i]) });
-  loadVenues(city).then(v => {
-    venues = v;
+  list.addEventListener('click', e => { const b = e.target.closest('.venue-opt'); if (b) pick(b.dataset.name) });
+  quick.addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) pick(b.dataset.name) });
+  drawQuick();
+  Promise.all([loadVenues(city), loadCities().catch(() => null)]).then(([v, cities]) => {
+    const c = cities?.find(x => x.name === city);
+    venues = v.map(x => ({ ...x, mi: c && Number.isFinite(x.lat) ? milesBetween(c.lat, c.lng, x.lat, x.lng) : null }));
+    loaded = true;
     if (!document.body.contains(hint)) return;
     hint.textContent = v.length ? `${v.length} courts, fields and parks in ${city}, from OpenStreetMap. Or type any place.` : `We couldn’t find courts or fields in ${city} on the map yet. Type the place.`;
-    show();
-  }).catch(() => { if (document.body.contains(hint)) hint.textContent = 'Couldn’t load nearby places right now. Type the place instead.' });
-  return { picked: () => chosen && input.value === chosen.name ? chosen : null, refresh: () => { if (chosen && !fits(chosen)) { chosen = null } show() } };
+    drawQuick(); show();
+  }).catch(() => { loaded = true; if (document.body.contains(hint)) hint.textContent = 'Couldn’t load nearby places right now. Type the place instead.' });
+  return { picked: () => chosen && input.value === chosen.name ? chosen : null, refresh: () => { if (chosen && !chosen.sports.includes(sportOf())) chosen = null; drawQuick(); show() } };
 }
 function postGame(vs = '', vsTeam = '') {
   const def = new Date(Date.now() + 36e5 * 3); def.setMinutes(0, 0, 0);
   const local = new Date(def - def.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
-  sheet(`<h2>Post a game</h2><p class="muted">${vs ? 'Challenge ' + esc(vs) + '.' : 'Anyone in ' + esc(myCity()) + ' can join.'}</p><form id="pg"><label class="field" for="pgs"><span>Sport</span><select id="pgs">${SPORTS.map(s => `<option ${(S.teamCache[vsTeam]?.sport || (S.me.sports || [])[0]) === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label><label class="field" for="pgf"><span>Format</span><select id="pgf"></select></label><label class="field" for="pgt"><span>Play as</span><select id="pgt"></select></label><label class="field" for="pgo"><span>Opponent team (optional)</span><select id="pgo"></select></label><label class="field" for="pgn"><span>Looking for</span><select id="pgn">${(vs ? ['Challenge: ' + vs] : ['Open challenge', 'Need players', 'Team challenge', 'Casual run']).map(x => `<option>${esc(x.slice(0, 40))}</option>`).join('')}</select></label><label class="field" for="pgv"><span>Where</span></label><div class="cityfield venuefield"><input id="pgv" required minlength="2" maxlength="100" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="pgv-list" placeholder="Search courts, fields and parks"><div class="city-sug" id="pgv-list" role="listbox" hidden></div></div><p class="muted venue-hint" id="pgv-hint">Looking up courts and fields in ${esc(myCity())}…</p><label class="field" for="pgd"><span>When</span><input id="pgd" type="datetime-local" required value="${local}"></label><p id="pgerr" class="auth-err" hidden></p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="pggo">Post game</button></div></form>`);
+  sheet(`<h2>Post a game</h2><p class="muted">${vs ? 'Challenge ' + esc(vs) + '.' : 'Anyone in ' + esc(myCity()) + ' can join.'}</p><form id="pg"><label class="field" for="pgs"><span>Sport</span><select id="pgs">${SPORTS.map(s => `<option ${(S.teamCache[vsTeam]?.sport || (S.me.sports || [])[0]) === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label><label class="field" for="pgf"><span>Format</span><select id="pgf"></select></label><label class="field" for="pgt"><span>Play as</span><select id="pgt"></select></label><label class="field" for="pgo"><span>Opponent team (optional)</span><select id="pgo"></select></label><label class="field" for="pgn"><span>Looking for</span><select id="pgn">${(vs ? ['Challenge: ' + vs] : ['Open challenge', 'Need players', 'Team challenge', 'Casual run']).map(x => `<option>${esc(x.slice(0, 40))}</option>`).join('')}</select></label><label class="field" for="pgv"><span>Where</span></label><div class="cityfield venuefield"><input id="pgv" required minlength="2" maxlength="100" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="pgv-list" placeholder="Search courts, fields and parks"><div class="city-sug" id="pgv-list" role="listbox" hidden></div></div><div class="venue-quick" id="pgv-quick" aria-label="Quick picks"></div><p class="muted venue-hint" id="pgv-hint">Looking up courts and fields in ${esc(myCity())}…</p><label class="field" for="pgd"><span>When</span><input id="pgd" type="datetime-local" required value="${local}"></label><p id="pgerr" class="auth-err" hidden></p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="pggo">Post game</button></div></form>`);
   const fill = () => {
     const sp = $('#pgs').value, mineT = S.myTeams.filter(t => t.sport === sp), opp = S.teams.filter(t => t.sport === sp && !myTeamIds().has(t.id) && ok(t.captainUid));
     $('#pgf').innerHTML = FORMATS[sp].map(f => `<option ${f === '3v3' ? 'selected' : ''}>${f}</option>`).join('');

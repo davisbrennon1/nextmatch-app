@@ -145,3 +145,8 @@
 .venuefield .city-sug{max-height:320px}
 .venue-opt{flex-direction:column;align-items:flex-start;gap:2px}
 .venue-opt small{text-align:left;max-width:100%;white-space:normal;padding-left:24px}
+/* Quick picks under Where (merged from the other preview version) */
+.venue-quick{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
+.venue-quick::-webkit-scrollbar{display:none}
+.venue-quick:empty{display:none}
+.venue-quick .chip{flex-shrink:0;padding:6px 11px;font-size:12px;white-space:nowrap;cursor:pointer}
