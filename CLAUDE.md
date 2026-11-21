@@ -14,7 +14,7 @@ It runs the real `public/app.js` on an in-browser stand-in for Firebase with sam
 
 1. `node preview/build.mjs` (writes `preview/dist/`, which is git-ignored)
 2. Publish with the Artifact tool, passing `url` = the preview link above, `file_path` =
-   `preview/dist/index.html`, `root` = the absolute path of `preview/dist`, and `files` mapping each of `app.js`, `cities.js`, `config.js`, `styles.css`,
+   `preview/dist/index.html`, `root` = the absolute path of `preview/dist`, and `files` mapping each of `app.js`, `us-cities.js`, `config.js`, `styles.css`,
    `auth.css`, `mock/core.js`, `mock/firebase-app.js`, `mock/firebase-auth.js`,
    `mock/firebase-firestore.js` to itself (e.g. `"app.js": "app.js"`). Read the artifact first
    if this session hasn't read or published it.
@@ -23,6 +23,12 @@ It runs the real `public/app.js` on an in-browser stand-in for Firebase with sam
 If the app starts using a new Firebase function, add it to the matching file in `preview/mock/`
 (and to `core.js`). If a server rule changes in `functions/lib.js`, mirror it in `core.js`
 ("Server behaviour" section) so the preview behaves the same. Add sample data in `seed()`.
+
+## Switched-off features
+
+`FEATURES.workouts` in `public/config.js` is `false`: weekly fitness challenges, "Log a workout",
+the Training feed tab and workout posts are hidden (the code and rules are still there).
+The owner asked to take workouts out for now; flip it to `true` to bring them back.
 
 ## Checks before saving to GitHub
 

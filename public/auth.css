@@ -130,3 +130,4 @@
 @media (max-width:959px){.topbar .city #cityname{max-width:96px}}
 @media (max-width:959px){.topbar .city{font-size:13px;gap:4px;padding:6px 10px}}
 @media (max-width:400px){.topbar .wordmark{font-size:0;gap:0}}
+.city-opt em{font-style:normal;font-weight:500;color:var(--muted)}

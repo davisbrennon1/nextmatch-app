@@ -229,34 +229,34 @@ function seed() {
     you: ['Jordan Davis', ['Basketball'], 1240, 12, 4], marcus: ['Marcus Williams', ['Basketball'], 2480, 24, 6], devin: ['Devin Carter', ['Basketball'], 1985, 18, 7],
     chris: ['Chris Evans', ['Flag football', 'Basketball'], 1180, 10, 6], tyler: ['Tyler Brooks', ['Basketball'], 960, 8, 6], andre: ['Andre Johnson', ['Flag football'], 1410, 11, 7],
     riley: ['Riley Ortiz', ['Flag football'], 1560, 13, 4], sam: ['Sam Patel', ['Basketball'], 640, 5, 5],
-    kendra: ['Kendra Reed', ['Basketball'], 1720, 15, 5, 'Dallas'], jaylen: ['Jaylen Brooks', ['Basketball'], 1330, 11, 6, 'Dallas'],
-    omar: ['Omar Haddad', ['Flag football'], 1490, 12, 5, 'Houston'], lucia: ['Lucia Flores', ['Basketball', 'Flag football'], 880, 7, 6, 'Houston']
+    kendra: ['Kendra Reed', ['Basketball'], 1720, 15, 5, 'Dallas, TX'], jaylen: ['Jaylen Brooks', ['Basketball'], 1330, 11, 6, 'Dallas, TX'],
+    omar: ['Omar Haddad', ['Flag football'], 1490, 12, 5, 'Houston, TX'], lucia: ['Lucia Flores', ['Basketball', 'Flag football'], 880, 7, 6, 'Houston, TX']
   };
-  for (const [id, [name, sports, rp, wins, losses, city = 'Austin']] of Object.entries(users)) {
+  for (const [id, [name, sports, rp, wins, losses, city = 'Austin, TX']] of Object.entries(users)) {
     put('users/' + id, { name, city, sports, rp, wins, losses, scored: Math.round(rp * 0.31), adult: true, createdAt: ts(now - 40 * D) });
     accounts.set((id === 'you' ? 'jordan' : id) + '@example.com', { uid: id, password: '' });
   }
-  const team = (id, name, sport, captainUid, members, rp, wins, losses) => put('teams/' + id, { name, sport, city: 'Austin', captainUid, members, rp, wins, losses, createdAt: ts(now - 30 * D) });
+  const team = (id, name, sport, captainUid, members, rp, wins, losses) => put('teams/' + id, { name, sport, city: 'Austin, TX', captainUid, members, rp, wins, losses, createdAt: ts(now - 30 * D) });
   team('eastside', 'Eastside Buckets', 'Basketball', 'you', ['you', 'tyler', 'sam'], 1840, 16, 6);
   team('northloop', 'North Loop Ballers', 'Basketball', 'marcus', ['marcus', 'devin'], 2210, 20, 5);
   team('outlaws', 'ATX Outlaws', 'Flag football', 'riley', ['riley', 'andre', 'chris'], 1560, 13, 4);
   put('teams/eastside/messages/m1', { uid: 'tyler', name: 'Tyler Brooks', text: 'Who’s got the ball Thursday?', at: ts(now - 5 * H) });
   put('teams/eastside/messages/m2', { uid: 'sam', name: 'Sam Patel', text: 'I got it. Court’s booked for 6.', at: ts(now - 4 * H) });
   put('teams/eastside/requests/chris', { name: 'Chris Evans', at: ts(now - 3 * H) });
-  const game = (id, g) => put('games/' + id, { sport: 'Basketball', city: 'Austin', away: [], status: 'open', createdAt: ts(now - 2 * D), ...g, players: [...g.home, ...(g.away || [])] });
+  const game = (id, g) => put('games/' + id, { sport: 'Basketball', city: 'Austin, TX', away: [], status: 'open', createdAt: ts(now - 2 * D), ...g, players: [...g.home, ...(g.away || [])] });
   game('marcus1v1', { hostUid: 'marcus', hostName: 'Marcus Williams', format: '1v1', need: 'Open challenge', venue: 'Pease Park Courts', when: soon(), home: ['marcus'] });
   game('pickup3', { hostUid: 'tyler', hostName: 'Tyler Brooks', format: '3v3', need: 'Need players', venue: 'Pan Am Recreation Center', when: at(0, 23, 30) > Timestamp.fromMillis(now + H) ? at(0, 23, 30) : at(1, 19), home: ['tyler', 'sam'], away: ['devin'] });
   game('teamgame', { hostUid: 'you', hostName: 'Jordan Davis', format: '3v3', need: 'Team challenge', venue: 'Pan Am Recreation Center', when: at(2, 18), home: ['you', 'tyler'], away: ['marcus'], homeTeamId: 'eastside', homeTeamName: 'Eastside Buckets', awayTeamId: 'northloop', awayTeamName: 'North Loop Ballers' });
   game('outlaws', { sport: 'Flag football', hostUid: 'riley', hostName: 'Riley Ortiz', format: '5v5', need: 'Need players', venue: 'Zilker Metropolitan Park', when: at(1, 10), home: ['riley', 'andre'] });
   game('devin2v2', { hostUid: 'devin', hostName: 'Devin Carter', format: '2v2', need: 'Open challenge', venue: 'Givens District Park', when: at(3, 18), home: ['devin'] });
-  game('dallas1', { city: 'Dallas', hostUid: 'kendra', hostName: 'Kendra Reed', format: '2v2', need: 'Need players', venue: 'Fair Park Courts', when: at(1, 18), home: ['kendra', 'jaylen'] });
-  game('houston1', { city: 'Houston', sport: 'Flag football', hostUid: 'omar', hostName: 'Omar Haddad', format: '5v5', need: 'Open challenge', venue: 'Memorial Park', when: at(2, 10), home: ['omar', 'lucia'] });
+  game('dallas1', { city: 'Dallas, TX', hostUid: 'kendra', hostName: 'Kendra Reed', format: '2v2', need: 'Need players', venue: 'Fair Park Courts', when: at(1, 18), home: ['kendra', 'jaylen'] });
+  game('houston1', { city: 'Houston, TX', sport: 'Flag football', hostUid: 'omar', hostName: 'Omar Haddad', format: '5v5', need: 'Open challenge', venue: 'Memorial Park', when: at(2, 10), home: ['omar', 'lucia'] });
   game('lastnight', { hostUid: 'you', hostName: 'Jordan Davis', format: '1v1', need: 'Open challenge', venue: 'Mueller Lake Park', when: ts(now - 2 * H), home: ['you'], away: ['chris'] });
   game('twovtwo', { hostUid: 'you', hostName: 'Jordan Davis', format: '2v2', need: 'Team challenge', venue: 'Pan Am Recreation Center', when: ts(now - 3 * H), home: ['you', 'tyler'], away: ['marcus', 'devin'], homeTeamId: 'eastside', homeTeamName: 'Eastside Buckets', awayTeamId: 'northloop', awayTeamName: 'North Loop Ballers' });
   game('needsconfirm', { hostUid: 'devin', hostName: 'Devin Carter', format: '1v1', need: 'Open challenge', venue: 'Givens District Park', when: ts(now - D), home: ['devin'], away: ['you'], status: 'reported', report: { by: 'devin', side: 'home', home: 21, away: 18, players: { devin: 21, you: 18 }, at: ts(now - 20 * H) } });
   game('lostmarcus', { hostUid: 'you', hostName: 'Jordan Davis', format: '1v1', need: 'Open challenge', venue: 'Pease Park Courts', when: ts(now - 5 * D), home: ['you'], away: ['marcus'], status: 'final', awarded: true, report: { by: 'marcus', side: 'away', home: 15, away: 21, at: ts(now - 5 * D) }, final: { home: 15, away: 21, winner: 'away', pts: 100, earned: { home: 15, away: 121 }, players: { you: { scored: 15, earned: 15 }, marcus: { scored: 21, earned: 121 } } } });
   game('beatsam', { hostUid: 'sam', hostName: 'Sam Patel', format: '1v1', need: 'Open challenge', venue: 'Mueller Lake Park', when: ts(now - 8 * D), home: ['sam'], away: ['you'], status: 'final', awarded: true, report: { by: 'you', side: 'away', home: 12, away: 21, at: ts(now - 8 * D) }, final: { home: 12, away: 21, winner: 'away', pts: 100, earned: { home: 12, away: 121 }, players: { sam: { scored: 12, earned: 12 }, you: { scored: 21, earned: 121 } } } });
-  const post = (id, uid, kind, caption, art, likedBy, ago) => put('posts/' + id, { uid, name: users[uid][0], city: 'Austin', kind, caption, sport: art === 'football' ? 'Flag football' : 'Basketball', art, mediaUrl: null, mediaType: null, likedBy, createdAt: ts(now - ago) });
+  const post = (id, uid, kind, caption, art, likedBy, ago) => put('posts/' + id, { uid, name: users[uid][0], city: 'Austin, TX', kind, caption, sport: art === 'football' ? 'Flag football' : 'Basketball', art, mediaUrl: null, mediaType: null, likedBy, createdAt: ts(now - ago) });
   post('p1', 'marcus', 'Highlight', 'Late night runs at Pease. No shortcuts. #HoopLife', 'court', ['devin', 'tyler'], 2 * H);
   post('p2', 'riley', 'Highlight', 'Sunday is our kind of day. One team, one more rep. #ATXOutlaws', 'football', ['andre', 'you'], 5 * H);
   post('p3', 'you', 'Training', 'Leg day. Game-day foundation. Three rounds, controlled reps.', 'train', ['tyler'], D);

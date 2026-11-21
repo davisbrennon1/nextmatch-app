@@ -233,9 +233,13 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
 - **Ban someone:** Authentication → Users → ⋮ → **Disable account**.
 - **Fix player points:** players can't change their own points. To correct a mistake,
   edit `rp`, `wins`, `losses` in Firestore → `users` (or `teams`).
-- **Cities:** players pick from all 1,023 Texas cities and towns, with search and a "Near me"
-  button. The list is in `public/cities.js` (from GeoNames, geonames.org, CC BY 4.0). To offer
-  only some cities, set `CITIES` in `public/config.js` to a list like `["Austin", "Dallas"]`.
+- **Cities:** players pick from 34,408 U.S. cities and towns (all 50 states and DC), with search
+  and a "Near me" button. Cities are stored with their state, like "Austin, TX". The list is in
+  `public/us-cities.js` (from ZIP code data and GeoNames, geonames.org, CC BY 4.0) and only
+  downloads when someone opens the city finder. To offer only some cities, set `CITIES` in
+  `public/config.js`, e.g. `["Austin, TX", "Dallas, TX"]`.
+- **Workouts are switched off** for now (`workouts: false` in `public/config.js`). Set it to
+  `true` to bring back weekly fitness challenges and workout posts.
 - **Delete someone's account at their request:** Authentication → Users → ⋮ →
   Delete account, then delete their document in Firestore → `users`.
 

@@ -3,13 +3,12 @@
 import fs from 'fs';
 const root = new URL('..', import.meta.url).pathname, out = root + 'preview/dist/';
 fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(out + 'mock', { recursive: true });
-for (const f of ['app.js', 'cities.js', 'styles.css', 'auth.css']) fs.copyFileSync(root + 'public/' + f, out + f);
+for (const f of ['app.js', 'us-cities.js', 'styles.css', 'auth.css']) fs.copyFileSync(root + 'public/' + f, out + f);
 for (const f of fs.readdirSync(root + 'preview/mock')) fs.copyFileSync(root + 'preview/mock/' + f, out + 'mock/' + f);
 fs.writeFileSync(out + 'config.js', `// Preview settings: runs on sample data, no Firebase needed.
 export const firebaseConfig = { apiKey: 'preview', authDomain: 'preview', projectId: 'preview', appId: 'preview' };
-export const FEATURES = { google: true, apple: true, uploads: false, pushKey: '' };
-import { TEXAS_CITIES } from './cities.js';
-export const CITIES = TEXAS_CITIES.map(c => c[0]);
+export const FEATURES = ${(fs.readFileSync(root + 'public/config.js', 'utf8').match(/export const FEATURES = (\{[\s\S]*?\n\});/) || [, '{}'])[1].replace(/pushKey: "[^"]*"/, 'pushKey: ""').replace(/uploads: true/, 'uploads: false')};
+export const CITIES = [];
 export const USE_EMULATORS = false;
 `);
 const html = fs.readFileSync(root + 'public/index.html', 'utf8');

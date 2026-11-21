@@ -22,13 +22,14 @@ export const FEATURES = {
   uploads: false,
   // Push notifications on phones and computers. Paste your Web Push key here (README step 8).
   // Leave empty to keep only the in-app notification bell.
-  pushKey: ""
+  pushKey: "",
+  // Weekly fitness challenges, workout posts and fitness points. Off for now.
+  workouts: false
 };
 
-// Cities people can pick: every Texas city and town (from cities.js). Games and players
-// are grouped by city. To limit the list, replace this with names, e.g. ["Austin", "Dallas"].
-import { TEXAS_CITIES } from './cities.js';
-export const CITIES = TEXAS_CITIES.map(c => c[0]);
+// Cities people can pick. Empty means every U.S. city and town (from us-cities.js).
+// To offer only some, list them with the state, e.g. ["Austin, TX", "Dallas, TX"].
+export const CITIES = [];
 
 // Set to true only while testing on your own computer with the Firebase emulators.
 export const USE_EMULATORS = false;

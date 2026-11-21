@@ -1,5 +1,4 @@
 import { firebaseConfig, FEATURES, CITIES, USE_EMULATORS } from './config.js';
-import { TEXAS_CITIES } from './cities.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
   getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -94,64 +93,97 @@ const S = {
 let subs = [], citySubs = [], threadSub = null, commentSub = null, teamSubs = [], sheetSub = null;
 const unsubAll = () => { [...subs, ...citySubs, ...teamSubs].forEach(u => u()); subs = []; citySubs = []; teamSubs = []; threadSub?.(); threadSub = null; sheetSub?.(); sheetSub = null };
 const myName = () => S.me?.name || 'Player';
-const myCity = () => S.me?.city || CITIES[0];
+const myCity = () => S.me?.city || 'Austin, TX';
 
-/* ───────── Finding a city ───────── */
-const norm = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const CITY_LIST = TEXAS_CITIES.filter(c => CITIES.includes(c[0])).map(([name, pop, lat, lng]) => ({ name, pop, lat, lng, key: norm(name) }));
-// Exact name as stored, from whatever someone typed ("san antonio" → "San Antonio").
-const cityName = typed => CITY_LIST.find(c => c.key === norm(typed))?.name || null;
+/* ───────── Finding a city (every U.S. city and town, stored as "Austin, TX") ───────── */
+const STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
+const norm = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+let CITY_LIST = null, cityLoad = null;
+// The list is big, so it's only downloaded the first time someone looks for a city.
+function loadCities() {
+  if (CITY_LIST) return Promise.resolve(CITY_LIST);
+  return cityLoad ??= import('./us-cities.js').then(m => {
+    CITY_LIST = m.default.split('\n').map(line => {
+      const [name, st, pop, lat, lng] = line.split('|'), label = `${name}, ${st}`;
+      return { name: label, city: name, st, pop: +pop || 0, lat: +lat, lng: +lng, key: norm(`${name} ${st}`), long: norm(`${name} ${STATE_NAMES[st] || ''}`) };
+    }).filter(c => !CITY_FILTER || CITY_FILTER.has(c.name));
+    return CITY_LIST;
+  }).catch(e => { cityLoad = null; throw e });
+}
+const CITY_FILTER = Array.isArray(CITIES) && CITIES.length ? new Set(CITIES) : null;
+// Exact stored name from whatever someone typed ("austin tx", "Austin, Texas" → "Austin, TX").
+async function cityName(typed) {
+  const list = await loadCities(), k = norm(typed); if (!k) return null;
+  return (list.find(c => c.key === k || c.long === k) || list.find(c => norm(c.city) === k))?.name || null;
+}
 // Matches by start of name, then start of any word, then anywhere; bigger places first.
 function findCities(q, n = 40) {
-  const k = norm(q); if (!k) return [];
+  const k = norm(q); if (!k || !CITY_LIST) return [];
   const a = [], b = [], c = [];
-  for (const x of CITY_LIST) { if (x.key.startsWith(k)) a.push(x); else if (x.key.split(' ').some(w => w.startsWith(k))) b.push(x); else if (x.key.includes(k)) c.push(x) }
+  for (const x of CITY_LIST) {
+    if (x.key.startsWith(k) || x.long.startsWith(k)) a.push(x);
+    else if (x.key.split(' ').some(w => w.startsWith(k))) b.push(x);
+    else if (k.length > 2 && x.key.includes(k)) c.push(x);
+    if (a.length >= n) break;
+  }
   return [...a, ...b, ...c].slice(0, n);
 }
 function nearestCity(lat, lng) {
   let best = null, d = Infinity;
-  for (const x of CITY_LIST) { const dy = x.lat - lat, dx = (x.lng - lng) * Math.cos(lat * Math.PI / 180), e = dx * dx + dy * dy; if (e < d) { d = e; best = x } }
+  for (const x of CITY_LIST || []) { const dy = x.lat - lat, dx = (x.lng - lng) * Math.cos(lat * Math.PI / 180), e = dx * dx + dy * dy - (x.pop > 5000 ? 1e-4 : 0); if (e < d) { d = e; best = x } }
   return best;
 }
 function locateCity(done) {
   if (!navigator.geolocation) return toast('Location isn’t available here. Type your city instead.');
   toast('Finding your city…');
-  navigator.geolocation.getCurrentPosition(p => { const c = nearestCity(p.coords.latitude, p.coords.longitude); c ? done(c.name) : toast('Couldn’t match your location to a Texas city.') },
+  navigator.geolocation.getCurrentPosition(async p => { await loadCities(); const c = nearestCity(p.coords.latitude, p.coords.longitude); c ? done(c.name) : toast('Couldn’t match your location to a city.') },
     () => toast('Location isn’t available. Type your city instead.'), { timeout: 10000, maximumAge: 600000 });
 }
-const popText = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M people' : n >= 1e4 ? Math.round(n / 1e3) + 'K people' : n.toLocaleString() + ' people';
-const cityRows = list => list.map(c => `<button type="button" class="city-opt" role="option" data-city="${esc(c.name)}"><span>${esc(c.name)}</span><small>${popText(c.pop)}</small></button>`).join('');
+const popText = c => c.pop >= 1e6 ? (c.pop / 1e6).toFixed(1) + 'M people' : c.pop >= 1e4 ? Math.round(c.pop / 1e3) + 'K people' : c.pop ? c.pop.toLocaleString() + ' people' : STATE_NAMES[c.st] || '';
+const cityRows = list => list.map(c => `<button type="button" class="city-opt" role="option" data-city="${esc(c.name)}"><span>${esc(c.city)}<em>, ${esc(c.st)}</em></span><small>${popText(c)}</small></button>`).join('');
 // An input that suggests cities as you type (used on the setup screen and in Edit profile).
 function cityField(id, value = '') {
   return `<div class="cityfield"><input id="${id}" value="${esc(value)}" required autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-list" placeholder="Start typing your city"><button type="button" class="near" id="${id}-near">⌖ Near me</button><div class="city-sug" id="${id}-list" role="listbox" hidden></div></div>`;
 }
 function bindCityField(id) {
   const input = document.getElementById(id), list = document.getElementById(id + '-list');
-  const show = () => { const r = findCities(input.value, 8); list.innerHTML = r.length ? cityRows(r) : `<p class="muted">No Texas city matches “${esc(input.value)}”.</p>`; list.hidden = !input.value.trim(); input.setAttribute('aria-expanded', String(!list.hidden)) };
+  const show = async () => {
+    if (!input.value.trim()) { list.hidden = true; return }
+    if (!CITY_LIST) { list.innerHTML = '<p class="muted">Loading cities…</p>'; list.hidden = false; try { await loadCities() } catch { list.innerHTML = '<p class="muted">Couldn’t load the city list. Check your connection.</p>'; return } }
+    const r = findCities(input.value, 8);
+    list.innerHTML = r.length ? cityRows(r) : `<p class="muted">No U.S. city matches “${esc(input.value)}”.</p>`;
+    list.hidden = false; input.setAttribute('aria-expanded', 'true');
+  };
   const pick = name => { input.value = name; list.hidden = true; input.setAttribute('aria-expanded', 'false') };
   input.addEventListener('input', show);
+  input.addEventListener('focus', () => loadCities().catch(() => { }), { once: true });
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !list.hidden) { const f = list.querySelector('.city-opt'); if (f) { e.preventDefault(); pick(f.dataset.city) } } if (e.key === 'Escape') list.hidden = true });
   input.addEventListener('blur', () => setTimeout(() => { list.hidden = true }, 150));
   list.addEventListener('mousedown', e => e.preventDefault());
   list.addEventListener('click', e => { const b = e.target.closest('.city-opt'); if (b) pick(b.dataset.city) });
   document.getElementById(id + '-near').onclick = () => locateCity(pick);
 }
-const recentCities = () => ls.get('recentCities', []).filter(cityName);
+const recentCities = () => ls.get('recentCities', []).filter(n => typeof n === 'string' && n.includes(', '));
 function rememberCity(name) { ls.set('recentCities', [name, ...recentCities().filter(c => c !== name)].slice(0, 5)) }
-// The full-screen city finder behind the city button at the top of the app.
+// The city finder behind the city button at the top of the app.
 function openCityPicker() {
-  const draw = q => {
-    const r = findCities(q), body = $('#citylist'); if (!body) return;
-    if (q.trim()) { body.innerHTML = r.length ? cityRows(r) : `<p class="muted" style="padding:16px 4px">No Texas city matches “${esc(q)}”. Check the spelling, or try the nearest bigger city.</p>`; return }
-    const recent = recentCities().filter(n => n !== myCity()).map(n => CITY_LIST.find(c => c.name === n));
-    body.innerHTML = (recent.length ? `<div class="label city-group">Recent</div>${cityRows(recent)}` : '') + `<div class="label city-group">Biggest cities</div>${cityRows(CITY_LIST.slice(0, 12))}`;
+  sheet(`<h2>Pick your city</h2><p class="muted" id="citycount">Every city and town in the U.S. You’ll see games, teams and players there.</p><div class="city-search"><input id="cityq" type="search" autocomplete="off" placeholder="Search, e.g. Waco or Springfield, IL" aria-label="Search U.S. cities" aria-controls="citylist"><button type="button" class="btn btn-ghost btn-sm" id="citynear">⌖ Near me</button></div><div class="label city-group">Now showing: ${esc(myCity())}</div><div id="citylist" class="city-list" role="listbox" aria-label="Cities"><p class="muted" style="padding:16px 4px">Loading cities…</p></div>`, 'city');
+  const q = $('#cityq');
+  const draw = () => {
+    const body = $('#citylist'); if (!body || !CITY_LIST) return;
+    const v = q.value;
+    if (v.trim()) { const r = findCities(v); body.innerHTML = r.length ? cityRows(r) : `<p class="muted" style="padding:16px 4px">No U.S. city matches “${esc(v)}”. Check the spelling, or add the state, like “Springfield, IL”.</p>`; return }
+    const byName = new Map(CITY_LIST.map(c => [c.name, c]));
+    const recent = recentCities().filter(n => n !== myCity()).map(n => byName.get(n)).filter(Boolean);
+    const st = (myCity().split(', ')[1]) || 'TX', near = CITY_LIST.filter(c => c.st === st).slice(0, 10);
+    body.innerHTML = (recent.length ? `<div class="label city-group">Recent</div>${cityRows(recent)}` : '') + `<div class="label city-group">Biggest in ${esc(STATE_NAMES[st] || st)}</div>${cityRows(near)}<div class="label city-group">Biggest in the U.S.</div>${cityRows(CITY_LIST.slice(0, 10))}`;
   };
-  sheet(`<h2>Pick your city</h2><p class="muted">${CITY_LIST.length.toLocaleString()} Texas cities and towns. You’ll see games, teams and players there.</p><div class="city-search"><input id="cityq" type="search" autocomplete="off" placeholder="Search for a city, e.g. Waco" aria-label="Search Texas cities" aria-controls="citylist"><button type="button" class="btn btn-ghost btn-sm" id="citynear">⌖ Near me</button></div><div class="label city-group">Now showing: ${esc(myCity())}</div><div id="citylist" class="city-list" role="listbox" aria-label="Cities"></div>`, 'city');
-  const q = $('#cityq'); draw('');
-  q.oninput = () => draw(q.value);
+  q.oninput = draw;
   q.onkeydown = e => { if (e.key === 'Enter') { const f = $('#citylist .city-opt'); if (f) { e.preventDefault(); setCity(f.dataset.city) } } };
   $('#citylist').onclick = e => { const b = e.target.closest('.city-opt'); if (b) setCity(b.dataset.city) };
   $('#citynear').onclick = () => locateCity(setCity);
+  loadCities().then(list => { if ($('#citycount')) $('#citycount').textContent = `${list.length.toLocaleString()} cities and towns across the U.S. You’ll see games, teams and players there.`; draw() })
+    .catch(() => { const b = $('#citylist'); if (b) b.innerHTML = '<p class="muted" style="padding:16px 4px">Couldn’t load the city list. Check your connection and try again.</p>' });
 }
 async function setCity(name) {
   closeSheet(); if (!name || name === myCity()) return;
@@ -244,8 +276,8 @@ function renderSetup(user, msg = '') {
     e.preventDefault();
     const name = $('#s-name').value.trim().replace(/\s+/g, ' '), sports = [...document.querySelectorAll('#s-sports .chip.on')].map(b => b.dataset.s);
     if (name.length < 2) return renderSetup(user, 'Enter a player name with at least 2 characters.');
-    const city = cityName($('#s-city').value);
-    if (!city) return renderSetup(user, 'Pick your home city from the list of Texas cities.');
+    const city = await cityName($('#s-city').value).catch(() => null);
+    if (!city) return renderSetup(user, 'Pick your home city from the list. Add the state if needed, like “Springfield, IL”.');
     if (!$('#s-adult').checked) return renderSetup(user, 'NextMatch is for adults 18 and older.');
     $('#s-go').disabled = true;
     try {
@@ -405,7 +437,7 @@ function drawGameSheet() {
     const ready = g.home.length && g.away.length;
     result = `<div class="result-box ${g.status === 'disputed' ? 'bad' : ''}">${g.status === 'disputed' ? `<div class="label">Score disputed</div><p style="margin-bottom:10px">The last report (${g.report.home}–${g.report.away}) was disputed. Agree on the score, then report it again.</p>` : '<div class="label">Report the final score</div>'}${ready ? `<form id="rf" class="rf"><div class="rf-sides">${['home', 'away'].map(s => `<fieldset class="rf-side"><legend><span>${esc(sideName(g, s))}</span><b id="rt-${s}">0</b></legend>${g[s].map(u => `<label class="rf-p" for="rp-${u}"><span>${esc(nameOf(u))}${u === S.uid ? ' (you)' : ''}</span><input id="rp-${u}" data-side="${s}" data-uid="${u}" type="number" inputmode="numeric" min="0" max="999" placeholder="0" aria-label="Points scored by ${esc(nameOf(u))}"></label>`).join('')}</fieldset>`).join('')}</div><button class="btn btn-primary btn-sm" style="margin-top:12px">Submit final score</button></form><p class="muted" style="font-size:12px;margin-top:8px">Enter the points each player scored. Team totals add up for you. The other side confirms before anyone gets points.</p>` : '<p class="muted">Both sides need at least one player before a score can be reported.</p>'}</div>`;
   }
-  $('#sheetbody').innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><span class="sportbar ${sportCls(g.sport)}"><span class="dot"></span>${esc(g.sport)} · ${esc(g.format)}</span><button class="more" aria-label="More options" onclick="moreMenu('game','${g.id}','${g.hostUid}')">⋯</button></div><h2 style="margin-top:8px">${esc(gameTitle(g))}</h2><div style="display:grid;gap:4px;font-size:14px;margin-top:10px"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(g.venue)}, ${esc(g.city)} · <a class="link" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(g.venue + ' ' + g.city + ' TX')}" target="_blank" rel="noopener">Directions ↗</a></span><span style="color:var(--gold);font-weight:700">Win: +${WIN_POINTS} player points, plus 1 for every point you score</span></div>${result}<div class="sides-grid">${col('home')}${col('away')}</div><p class="muted" style="font-size:13px;margin-top:12px">${g.sport === 'Flag football' ? 'Flag pulls end the play. No tackling. Captains confirm field size and scoring before kickoff.' : 'Games to 21, win by 2 unless captains agree otherwise.'}</p><div class="actions">${host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="cancelGame('${g.id}')">Cancel game</button>` : ''}${sd && !host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="leaveGame('${g.id}')">Leave game</button>` : ''}${sd && !['final', 'confirmed'].includes(g.status) ? `<button class="btn btn-primary" onclick="startGame('${g.id}')">Open scoreboard</button>` : `<button class="btn btn-ghost" onclick="closeSheet()">Close</button>`}</div>`;
+  $('#sheetbody').innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><span class="sportbar ${sportCls(g.sport)}"><span class="dot"></span>${esc(g.sport)} · ${esc(g.format)}</span><button class="more" aria-label="More options" onclick="moreMenu('game','${g.id}','${g.hostUid}')">⋯</button></div><h2 style="margin-top:8px">${esc(gameTitle(g))}</h2><div style="display:grid;gap:4px;font-size:14px;margin-top:10px"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(g.venue)}, ${esc(g.city)} · <a class="link" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(g.venue + ' ' + g.city)}" target="_blank" rel="noopener">Directions ↗</a></span><span style="color:var(--gold);font-weight:700">Win: +${WIN_POINTS} player points, plus 1 for every point you score</span></div>${result}<div class="sides-grid">${col('home')}${col('away')}</div><p class="muted" style="font-size:13px;margin-top:12px">${g.sport === 'Flag football' ? 'Flag pulls end the play. No tackling. Captains confirm field size and scoring before kickoff.' : 'Games to 21, win by 2 unless captains agree otherwise.'}</p><div class="actions">${host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="cancelGame('${g.id}')">Cancel game</button>` : ''}${sd && !host && g.status === 'open' ? `<button class="btn btn-ghost" onclick="leaveGame('${g.id}')">Leave game</button>` : ''}${sd && !['final', 'confirmed'].includes(g.status) ? `<button class="btn btn-primary" onclick="startGame('${g.id}')">Open scoreboard</button>` : `<button class="btn btn-ghost" onclick="closeSheet()">Close</button>`}</div>`;
   const f = $('#rf');
   if (f) {
     if (keep) keep.forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v });
@@ -496,15 +528,15 @@ function today() {
   const next = S.myGames.filter(g => g.status === 'open' && toDate(g.when) > new Date(Date.now() - 2 * 36e5)).sort((a, b) => toDate(a.when) - toDate(b.when))[0];
   const todays = S.games.filter(g => ok(g.hostUid) && dayLabel(toDate(g.when)) === 'Today');
   let ticket;
-  if (next) { const w = toDate(next.when), [cd, cdl] = countdown(w); ticket = `<section class="ticket ${sportCls(next.sport)}" aria-label="Your next game"><div class="main"><div class="label">Next up · ${esc(next.format)} ${esc(next.sport)}</div><h2>${esc(gameTitle(next))}</h2><div class="meta"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(next.venue)}</span><span>${next.players.length} in</span></div><div class="row"><button class="btn btn-primary btn-sm" onclick="startGame('${next.id}')">${ic('whistle', false, 'width="16" height="16"')} Open scoreboard</button><a class="btn btn-ghost btn-sm" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(next.venue + ' ' + next.city + ' TX')}" target="_blank" rel="noopener">Directions ↗</a><button class="btn btn-ghost btn-sm" onclick="openGame('${next.id}')">Details</button></div></div><div class="stub"><b style="font-family:var(--display)">${cd}</b><small>${cdl}</small></div></section>` }
+  if (next) { const w = toDate(next.when), [cd, cdl] = countdown(w); ticket = `<section class="ticket ${sportCls(next.sport)}" aria-label="Your next game"><div class="main"><div class="label">Next up · ${esc(next.format)} ${esc(next.sport)}</div><h2>${esc(gameTitle(next))}</h2><div class="meta"><span>◷ ${dayLabel(w)}, ${timeOf(w)}</span><span>⌖ ${esc(next.venue)}</span><span>${next.players.length} in</span></div><div class="row"><button class="btn btn-primary btn-sm" onclick="startGame('${next.id}')">${ic('whistle', false, 'width="16" height="16"')} Open scoreboard</button><a class="btn btn-ghost btn-sm" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(next.venue + ' ' + next.city)}" target="_blank" rel="noopener">Directions ↗</a><button class="btn btn-ghost btn-sm" onclick="openGame('${next.id}')">Details</button></div></div><div class="stub"><b style="font-family:var(--display)">${cd}</b><small>${cdl}</small></div></section>` }
   else ticket = `<section class="ticket"><div class="main"><div class="label">Next up</div><h2>No game on your <em>calendar.</em></h2><div class="meta"><span>Join a game below or post your own and see who shows up.</span></div><div class="row"><button class="btn btn-primary btn-sm" onclick="postGame()">＋ Post a game</button><button class="btn btn-ghost btn-sm" onclick="go('play',{play:'games'})">Browse games</button></div></div><div class="stub"><b style="font-family:var(--display)">0</b><small>Games booked</small></div></section>`;
-  const recent = S.posts.filter(p => ok(p.uid) && !p.hidden).slice(0, 3);
+  const recent = visiblePosts(S.posts).slice(0, 3);
   return `<div class="cols two"><div style="min-width:0"><div class="greet"><div><div class="label">${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div><h1 style="margin-top:6px">${hi}, <span>${esc(first())}.</span></h1></div></div>${actionItems()}${ticket}
   <div class="sec"><h2>Today in ${esc(myCity())}</h2><button class="link" onclick="go('play',{play:'games'})">All games →</button></div>${!S.loaded.games ? '<div class="loading">Loading games…</div>' : `<div class="games">${todays.map(gameRow).join('') || '<div class="empty">No games today yet. Post one and see who shows up.</div>'}</div>`}
   ${rankChart()}
-  ${window.innerWidth < 960 ? `<div style="display:grid;gap:18px;margin-top:22px">${seasonCard()}${weekCard()}</div>` : ''}
+  ${window.innerWidth < 960 ? `<div style="display:grid;gap:18px;margin-top:22px">${seasonCard()}${FEATURES.workouts ? weekCard() : ''}</div>` : ''}
   <div class="sec"><h2>From the community</h2><button class="link" onclick="openReels()">Watch reels →</button></div>${recent.length ? `<div class="hl-grid">${recent.map((p, i) => `<button class="hl" onclick="openReels(${i})">${p.mediaUrl && p.mediaType?.startsWith('image/') ? `<img src="${esc(p.mediaUrl)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">` : art(p.art)}<span>${esc(p.name)}<small>${esc(p.caption.slice(0, 42))}${p.caption.length > 42 ? '…' : ''}</small></span></button>`).join('')}</div>` : '<div class="empty">No posts yet. Be the first to share a highlight.</div>'}</div>
-  <aside class="rail">${seasonCard()}${weekCard()}</aside></div>`;
+  <aside class="rail">${seasonCard()}${FEATURES.workouts ? weekCard() : ''}</aside></div>`;
 }
 
 /* Front-page ranking chart: top players in your city by player points, with your spot. */
@@ -590,7 +622,7 @@ function teamPage() {
   const games = [...S.games, ...S.myGames].filter((g, i, a) => a.findIndex(x => x.id === g.id) === i && (g.homeTeamId === t.id || g.awayTeamId === t.id)).sort((a, b) => toDate(b.when) - toDate(a.when)).slice(0, 8);
   const btns = member ? `${cap ? `<button class="btn btn-primary btn-sm" onclick="postGame('','')">⚔ Post a team game</button><button class="btn btn-ghost btn-sm" onclick="renameTeam()">Rename</button>` : `<button class="btn btn-ghost btn-sm" onclick="leaveTeam()">Leave team</button>`}<button class="btn btn-ghost btn-sm" onclick="shareTeam()">Invite players</button>` : `${req ? '<button class="btn btn-ghost btn-sm" onclick="cancelRequest()">Request sent · Cancel</button>' : `<button class="btn btn-primary btn-sm" onclick="requestJoin()">Ask to join</button>`}${S.myTeams.some(m => m.sport === t.sport && m.captainUid === S.uid) ? `<button class="btn btn-ghost btn-sm" onclick="postGame('${esc(t.name).replace(/'/g, '&#39;')}','${t.id}')">⚔ Challenge</button>` : ''}<button class="btn btn-ghost btn-sm" onclick="moreMenu('team','${t.id}','${t.captainUid}')">⋯</button>`;
   return `<button class="link" style="margin-bottom:14px" onclick="go('play',{play:'teams'})">‹ Back to teams</button><div class="cols two"><div style="min-width:0">
-  <section class="pcard"><div class="stripe"></div><div class="label">${esc(t.city)}, TX · ${esc(t.sport)} · Team</div><h1>${esc(t.name)}</h1><span class="tier">★ ${tierOf(t.rp || 0).name}</span><div class="pc-stats"><div><b>${(t.rp || 0).toLocaleString()}</b><span>Player pts</span></div><div><b>${t.wins || 0}–${t.losses || 0}</b><span>Record</span></div><div><b>${t.members.length}</b><span>Players</span></div><div><b>${games.filter(g => g.status !== 'final' && toDate(g.when) > new Date()).length}</b><span>Upcoming</span></div></div><div class="row">${btns}</div></section>
+  <section class="pcard"><div class="stripe"></div><div class="label">${esc(t.city)} · ${esc(t.sport)} · Team</div><h1>${esc(t.name)}</h1><span class="tier">★ ${tierOf(t.rp || 0).name}</span><div class="pc-stats"><div><b>${(t.rp || 0).toLocaleString()}</b><span>Player pts</span></div><div><b>${t.wins || 0}–${t.losses || 0}</b><span>Record</span></div><div><b>${t.members.length}</b><span>Players</span></div><div><b>${games.filter(g => g.status !== 'final' && toDate(g.when) > new Date()).length}</b><span>Upcoming</span></div></div><div class="row">${btns}</div></section>
   ${cap && S.teamReqs.length ? `<div class="sec"><h2>Join requests</h2></div><section class="card">${S.teamReqs.filter(r => ok(r.id)).map(r => `<div class="team-row">${avatar(r.name)}<div style="min-width:0"><button onclick="openProfile('${r.id}')"><strong>${esc(r.name)}</strong></button><small>Wants to join</small></div><span style="display:flex;gap:6px"><button class="btn btn-sm btn-primary" onclick="approve('${r.id}')">Approve</button><button class="btn btn-sm btn-ghost" onclick="decline('${r.id}')">Decline</button></span></div>`).join('')}</section>` : ''}
   ${member ? `<div class="sec"><h2>Team chat</h2></div><section class="card team-chat"><div class="bubbles" id="teamchat" onscroll="this.dataset.user=this.scrollTop+this.clientHeight<this.scrollHeight-40?'1':''">${S.teamMsgs.filter(m => ok(m.uid)).map(m => `<div class="bubble ${m.uid === S.uid ? 'me' : ''}">${m.uid === S.uid ? '' : `<b class="who">${esc(m.name)}</b>`}${esc(m.text)}<small>${m.at ? dayLabel(toDate(m.at)) + ', ' + timeOf(toDate(m.at)) : 'Sending…'}</small></div>`).join('') || '<p class="muted" style="text-align:center;margin:auto;font-size:13px">Start the team chat. Set up your next run.</p>'}</div><form class="compose" id="tc"><input id="tci" maxlength="1000" placeholder="Message ${esc(t.name)}…" aria-label="Team message" autocomplete="off"><button class="btn btn-primary btn-sm">Send</button></form></section>` : `<div class="empty" style="margin-top:20px">Team chat is for members. ${req ? 'Your request is waiting for the captain.' : 'Ask to join to chat with the team.'}</div>`}
   </div><aside class="rail" style="display:flex">${teamSide(t, games)}</aside>${window.innerWidth < 960 ? `<div style="display:grid;gap:18px">${teamSide(t, games)}</div>` : ''}</div>`;
@@ -624,7 +656,7 @@ function renameTeam() {
 function shareTeam() { const url = location.origin + '/#team/' + S.team; (navigator.share ? navigator.share({ title: S.teamCache[S.team].name, text: 'Join my team on NextMatch', url }) : navigator.clipboard.writeText(url).then(() => toast('Invite link copied.'))).catch(() => { }) }
 
 /* ================= Create menu, posts, workouts ================= */
-function openCreate() { sheet(`<h2>What’s the play?</h2>${[['swords', 'Post a game', 'Pickup or team challenge', 'postGame()'], ['users', 'Create a team', 'Roster and team chat', 'createTeam()'], ['camera', 'Share a highlight', FEATURES.uploads ? 'Photo or video from your game' : 'Tell everyone how the run went', "newPost('Highlight')"], ['dumbbell', 'Log a workout', 'Training and fitness points', "newPost('Training')"], ['whistle', 'Practice scoreboard', 'Run the clock and score', 'startGame()']].map(o => `<button class="create-opt" onclick="closeSheet();${o[3]}"><span class="ic">${ic(o[0])}</span><span><b>${o[1]}</b><small>${o[2]}</small></span><span class="muted">›</span></button>`).join('')}`) }
+function openCreate() { sheet(`<h2>What’s the play?</h2>${[['swords', 'Post a game', 'Pickup or team challenge', 'postGame()'], ['users', 'Create a team', 'Roster and team chat', 'createTeam()'], ['camera', 'Share a highlight', FEATURES.uploads ? 'Photo or video from your game' : 'Tell everyone how the run went', "newPost('Highlight')"], ...(FEATURES.workouts ? [['dumbbell', 'Log a workout', 'Training and fitness points', "newPost('Training')"]] : []), ['whistle', 'Practice scoreboard', 'Run the clock and score', 'startGame()']].map(o => `<button class="create-opt" onclick="closeSheet();${o[3]}"><span class="ic">${ic(o[0])}</span><span><b>${o[1]}</b><small>${o[2]}</small></span><span class="muted">›</span></button>`).join('')}`) }
 function newPost(kind, prefill = '') {
   sheet(`<h2>${kind === 'Training' ? 'Log a workout' : 'Share a highlight'}</h2><form id="np"><label class="field" for="npc"><span>Caption</span><textarea id="npc" required maxlength="1000" placeholder="${kind === 'Training' ? 'What did you work on? How did it feel?' : 'What happened out there?'}">${esc(prefill)}</textarea></label><label class="field" for="npa"><span>Sport</span><select id="npa">${SPORTS.map(s => `<option>${s}</option>`).join('')}</select></label>${FEATURES.uploads ? `<label class="field" for="npf"><span>Photo or video (optional, up to 25 MB)</span><input id="npf" type="file" accept="image/*,video/*"></label>` : ''}<p id="nperr" class="auth-err" hidden></p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary" id="npgo">Post</button></div></form>`);
   $('#np').onsubmit = async e => {
@@ -652,7 +684,7 @@ function postCard(p) {
   const l = (p.likedBy || []).includes(S.uid), when = toDate(p.createdAt);
   return `<article class="post"><div class="post-head"><button onclick="openProfile('${p.uid}')">${avatar(p.name)}</button><div><button onclick="openProfile('${p.uid}')"><strong>${esc(p.name)}</strong></button><small>${ago(when)} · ${esc(p.city || '')}</small></div><span class="kind">${esc(p.kind)}</span><button class="more" aria-label="More options" onclick="moreMenu('post','${p.id}','${p.uid}')">⋯</button></div><p class="cap">${esc(p.caption)}</p><div class="media">${p.mediaUrl ? (p.mediaType?.startsWith('video/') ? `<video src="${esc(p.mediaUrl)}" controls playsinline preload="metadata"></video>` : `<img src="${esc(p.mediaUrl)}" alt="Photo from ${esc(p.name)}" loading="lazy">`) : art(p.art)}</div><div class="acts"><button class="${l ? 'on' : ''}" aria-pressed="${l}" onclick="like('${p.id}')">${ic('heart', l)} ${(p.likedBy || []).length}</button><button onclick="openComments('${p.id}','${p.uid}')">${ic('chat')} Comment</button><button onclick="share()">${ic('share')} Share</button></div></article>`;
 }
-const visiblePosts = list => list.filter(p => ok(p.uid) && (!p.hidden || p.uid === S.uid));
+const visiblePosts = list => list.filter(p => ok(p.uid) && (!p.hidden || p.uid === S.uid) && (FEATURES.workouts || p.kind !== 'Training'));
 async function like(id) { const p = S.posts.find(x => x.id === id) || Object.values(S.profilePosts).flat().find(x => x.id === id); if (!p) return; const l = (p.likedBy || []).includes(S.uid); try { await updateDoc(doc(db, 'posts', id), { likedBy: l ? arrayRemove(S.uid) : arrayUnion(S.uid) }) } catch (e) { console.error(e); toast('Couldn’t save your like.') } }
 function deletePost(id) { sheet(`<h2>Delete this post?</h2><p class="muted">It will be removed for everyone.</p><div class="actions"><button class="btn btn-ghost" onclick="closeSheet()">Keep it</button><button class="btn btn-primary" id="dp">Delete</button></div>`); $('#dp').onclick = async () => { try { await deleteDoc(doc(db, 'posts', id)); closeSheet(); toast('Post deleted.') } catch (e) { console.error(e); toast('Couldn’t delete. Try again.') } } }
 function share() { const url = location.origin; (navigator.share ? navigator.share({ title: 'NextMatch', text: 'Find a pickup game with me on NextMatch', url }) : navigator.clipboard.writeText(url).then(() => toast('Link copied.'))).catch(() => { }) }
@@ -663,7 +695,7 @@ function openComments(pid, owner) {
 }
 async function delComment(pid, cid) { try { await deleteDoc(doc(db, 'posts', pid, 'comments', cid)) } catch (e) { console.error(e) } }
 function feed() {
-  const segs = [['all', 'For you'], ['following', 'Following'], ['training', 'Training']];
+  const segs = [['all', 'For you'], ['following', 'Following'], ...(FEATURES.workouts ? [['training', 'Training']] : [])];
   const list = visiblePosts(S.posts).filter(p => S.feed === 'all' || (S.feed === 'training' ? p.kind === 'Training' : S.following.has(p.uid) || p.uid === S.uid));
   const suggest = S.players.filter(p => p.id !== S.uid && !S.following.has(p.id) && ok(p.id)).slice(0, 5);
   return `<div class="cols two"><div style="min-width:0"><div class="greet"><h1>Feed</h1><button class="btn btn-ghost btn-sm" onclick="openReels()">▶ Reels</button></div><div class="seg">${segs.map(([k, l]) => `<button class="${S.feed === k ? 'on' : ''}" onclick="S.feed='${k}';render()">${l}</button>`).join('')}</div><div class="composer">${avatar(myName())}<button onclick="newPost('Highlight')">Share a highlight, ${esc(first())}…</button></div>${!S.loaded.posts ? '<div class="loading">Loading posts…</div>' : list.map(postCard).join('') || `<div class="empty">${S.feed === 'following' ? 'Follow players to fill this feed.' : 'Nothing here yet. Post the first one.'}</div>`}</div><aside class="rail"><section class="card"><div class="label">Players in ${esc(myCity())}</div>${suggest.map(p => `<div class="team-row">${avatar(p.name)}<div style="min-width:0"><button onclick="openProfile('${p.id}')"><strong>${esc(p.name)}</strong></button><small>${esc((p.sports || []).join(' · '))}</small></div><button class="btn btn-sm btn-primary" onclick="follow('${p.id}')">Follow</button></div>`).join('') || '<p class="muted" style="font-size:13px;margin-top:8px">You’re following everyone here. Invite more friends.</p>'}<button class="btn btn-ghost btn-sm" style="margin-top:12px;width:100%" onclick="share()">Invite friends</button></section></aside></div>`;
@@ -749,11 +781,11 @@ async function unblock(uid) { try { await deleteDoc(doc(db, 'users', S.uid, 'blo
 /* ================= Me and other players ================= */
 function playerCard(p, buttons) {
   const rp = p.rp || 0;
-  return `<section class="pcard"><div class="stripe"></div><div class="num">${String(rp % 90 + 1)}</div><div class="label">${esc(p.city || '')}, TX · ${esc((p.sports || []).join(' · '))}</div><h1>${esc(p.name)}</h1><span class="tier">★ ${tierOf(rp).name}</span><div class="pc-stats"><div><b>${rp.toLocaleString()}</b><span>Player pts</span></div><div><b>${p.wins || 0}–${p.losses || 0}</b><span>Record</span></div><div><b>${(p.scored || 0).toLocaleString()}</b><span>Pts scored</span></div><div><b>${p.id === S.uid ? fpTotal() : S.teams.filter(t => t.members.includes(p.id)).length}</b><span>${p.id === S.uid ? 'Fitness' : 'Teams'}</span></div></div><div class="row">${buttons}</div></section>`;
+  return `<section class="pcard"><div class="stripe"></div><div class="num">${String(rp % 90 + 1)}</div><div class="label">${esc(p.city || '')} · ${esc((p.sports || []).join(' · '))}</div><h1>${esc(p.name)}</h1><span class="tier">★ ${tierOf(rp).name}</span><div class="pc-stats"><div><b>${rp.toLocaleString()}</b><span>Player pts</span></div><div><b>${p.wins || 0}–${p.losses || 0}</b><span>Record</span></div><div><b>${(p.scored || 0).toLocaleString()}</b><span>Pts scored</span></div><div><b>${p.id === S.uid && FEATURES.workouts ? fpTotal() : (p.id === S.uid ? S.myTeams.length : S.teams.filter(t => t.members.includes(p.id)).length)}</b><span>${p.id === S.uid && FEATURES.workouts ? 'Fitness' : 'Teams'}</span></div></div><div class="row">${buttons}</div></section>`;
 }
 function resultRow(g) { const sd = sideOf(g), f = g.final, won = f.winner === sd; return `<button class="result" style="width:100%;text-align:left" onclick="openGame('${g.id}')"><span class="wl ${f.winner ? (won ? 'w' : 'l') : 'l'}">${f.winner ? (won ? 'W' : 'L') : 'D'}</span><div style="min-width:0"><strong>${f[sd]}–${f[other(sd)]} vs ${esc(sideName(g, other(sd)))}</strong><small>${esc(g.format)} · You scored ${scoredBy(g, S.uid, sd)} · +${earnedBy(g, S.uid, sd)} pts</small></div><span class="mono muted" style="font-size:12px">${toDate(g.when).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span></button>` }
 function mePage() {
-  const myPosts = S.posts.filter(p => p.uid === S.uid), upcoming = S.myGames.filter(g => g.status === 'open' && toDate(g.when) >= startOfDay()).sort((a, b) => toDate(a.when) - toDate(b.when)), done = S.myGames.filter(g => g.status === 'final');
+  const myPosts = visiblePosts(S.posts.filter(p => p.uid === S.uid)), upcoming = S.myGames.filter(g => g.status === 'open' && toDate(g.when) >= startOfDay()).sort((a, b) => toDate(a.when) - toDate(b.when)), done = S.myGames.filter(g => g.status === 'final');
   return `<div class="cols two"><div style="min-width:0">${playerCard({ ...S.me, id: S.uid }, `<button class="btn btn-primary btn-sm" onclick="editMe()">Edit profile</button><button class="btn btn-ghost btn-sm" onclick="share()">Invite friends</button>`)}<div class="sec"><h2>Your games</h2></div><div class="games">${upcoming.map(gameRow).join('') || '<div class="empty">You haven’t joined any upcoming games.</div>'}</div><div class="sec"><h2>Results</h2></div><section class="card">${done.map(resultRow).join('') || '<p class="muted" style="font-size:13px">Confirmed results show up here.</p>'}</section><div class="sec"><h2>Your posts</h2><button class="link" onclick="newPost('Highlight')">＋ New</button></div>${myPosts.map(postCard).join('') || '<div class="empty">Share your first highlight.</div>'}</div><aside class="rail" style="display:flex">${meSide()}</aside>${window.innerWidth < 960 ? `<div style="display:grid;gap:18px">${meSide()}</div>` : ''}</div>`;
 }
 function meSide() {
@@ -766,7 +798,7 @@ function editMe() {
   sheet(`<h2>Edit profile</h2><form id="em"><label class="field" for="emn"><span>Player name</span><input id="emn" required minlength="2" maxlength="40" value="${esc(S.me.name)}"></label><label class="field" for="emc"><span>City</span></label>${cityField('emc', myCity())}<label class="field"><span>Sports</span></label><div class="chips" id="emsp">${SPORTS.map(s => `<button type="button" class="chip ${sp.has(s) ? 'on' : ''}" data-s="${s}" aria-pressed="${sp.has(s)}">${s}</button>`).join('')}</div><p class="muted" style="font-size:12px;margin-top:12px">Posts you already made keep the name you used then.</p><div class="actions"><button type="button" class="btn btn-ghost" onclick="closeSheet()">Cancel</button><button class="btn btn-primary">Save</button></div></form>`);
   bindCityField('emc');
   $('#emsp').querySelectorAll('.chip').forEach(b => b.onclick = () => { b.classList.toggle('on'); b.setAttribute('aria-pressed', b.classList.contains('on')) });
-  $('#em').onsubmit = async e => { e.preventDefault(); const name = $('#emn').value.trim().replace(/\s+/g, ' '); if (name.length < 2) return toast('Name needs at least 2 characters.'); const city = cityName($('#emc').value); if (!city) return toast('Pick your city from the list of Texas cities.'); const sports = [...document.querySelectorAll('#emsp .chip.on')].map(b => b.dataset.s); try { await updateDoc(doc(db, 'users', S.uid), { name, city, sports: sports.length ? sports : ['Basketball'] }); closeSheet(); toast('Profile saved.') } catch (x) { console.error(x); toast('Couldn’t save. Try again.') } };
+  $('#em').onsubmit = async e => { e.preventDefault(); const name = $('#emn').value.trim().replace(/\s+/g, ' '); if (name.length < 2) return toast('Name needs at least 2 characters.'); const city = await cityName($('#emc').value).catch(() => null); if (!city) return toast('Pick your city from the list. Add the state if needed, like “Springfield, IL”.'); const sports = [...document.querySelectorAll('#emsp .chip.on')].map(b => b.dataset.s); try { await updateDoc(doc(db, 'users', S.uid), { name, city, sports: sports.length ? sports : ['Basketball'] }); closeSheet(); toast('Profile saved.') } catch (x) { console.error(x); toast('Couldn’t save. Try again.') } };
 }
 async function doSignOut() {
   closeSheet(); S.tab = 'today';
