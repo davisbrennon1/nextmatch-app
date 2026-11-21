@@ -44,18 +44,18 @@ check('other side asked to confirm', !!confN && /21/.test(confN.body), JSON.stri
 check('reporter’s own side is not asked', !(await notifs('bob')).some(n => n.type === 'confirm'));
 await updateDoc(doc(as('carol'), 'games/g1'), { status: 'confirmed', responseBy: 'carol' });
 const fin = await waitFor(async () => { const g = await read('games/g1'); return g.status === 'final' && g });
-check('game finalized', fin?.final?.winner === 'home' && fin.final.home === 21 && fin.final.pts === 40, JSON.stringify(fin?.final));
+check('game finalized with points earned per side', fin?.final?.winner === 'home' && fin.final.home === 21 && fin.final.pts === 100 && fin.final.earned?.home === 121 && fin.final.earned?.away === 17, JSON.stringify(fin?.final));
 const [a, c, b] = [await read('users/alice'), await read('users/carol'), await read('users/bob')];
-check('winners get +40 RP and a win', a.rp === 40 && a.wins === 1 && c.rp === 40 && c.wins === 1, JSON.stringify({ a, c }));
-check('loser gets a loss, no points', b.rp === 0 && b.losses === 1 && b.wins === 0, JSON.stringify(b));
+check('winners get 100 for the win + 21 scored, and a win', a.rp === 121 && a.wins === 1 && c.rp === 121 && c.wins === 1, JSON.stringify({ a, c }));
+check('loser gets 1 point per point scored (17) and a loss', b.rp === 17 && b.losses === 1 && b.wins === 0, JSON.stringify(b));
 const [t1, t2] = [await read('teams/t1'), await read('teams/t2')];
-check('winning team gets points and a win', t1.rp === 40 && t1.wins === 1, JSON.stringify(t1));
-check('losing team gets a loss', t2.losses === 1 && t2.rp === 0, JSON.stringify(t2));
+check('winning team gets 121 and a win', t1.rp === 121 && t1.wins === 1, JSON.stringify(t1));
+check('losing team gets 17 and a loss', t2.losses === 1 && t2.rp === 17, JSON.stringify(t2));
 const finalN = await waitFor(async () => (await notifs('bob')).find(n => n.type === 'final'));
 check('everyone told the final', !!finalN && /Eastside wins/.test(finalN.body), JSON.stringify(finalN));
 await sleep(1500);
 const again = await read('users/alice');
-check('points awarded exactly once', again.rp === 40 && again.wins === 1, JSON.stringify(again));
+check('points awarded exactly once', again.rp === 121 && again.wins === 1, JSON.stringify(again));
 
 console.log('— Tie and dispute');
 const past = Timestamp.fromDate(new Date(Date.now() - 36e5));
@@ -68,9 +68,10 @@ check('no points after a dispute', (await read('users/dave')).rp === 0);
 await updateDoc(doc(as('erin'), 'games/g2'), { status: 'reported', report: { by: 'erin', side: 'away', home: 20, away: 20, at: serverTimestamp() } });
 await updateDoc(doc(as('dave'), 'games/g2'), { status: 'confirmed', responseBy: 'dave' });
 const tie = await waitFor(async () => { const g = await read('games/g2'); return g.status === 'final' && g });
-check('tie finalizes with no winner', tie?.final?.winner === null && tie.final.pts === 0, JSON.stringify(tie?.final));
+check('tie finalizes with no winner', tie?.final?.winner === null && tie.final.pts === 0 && tie.final.earned?.home === 20, JSON.stringify(tie?.final));
 const [dv, er] = [await read('users/dave'), await read('users/erin')];
 check('tie changes nobody’s record', dv.wins === 0 && dv.losses === 0 && er.wins === 0 && er.losses === 0);
+check('tie gives each player their scored points (20)', dv.rp === 20 && er.rp === 20, JSON.stringify({ dv: dv.rp, er: er.rp }));
 
 console.log('— Reported posts');
 await setDoc(doc(as('erin'), 'posts/p1'), { uid: 'erin', name: 'Erin', city: 'Austin', kind: 'Highlight', caption: 'spam spam', sport: 'Basketball', art: 'ball', mediaUrl: null, mediaType: null, likedBy: [], createdAt: serverTimestamp() });

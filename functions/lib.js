@@ -7,14 +7,23 @@ const { getMessaging } = require('firebase-admin/messaging');
 const db = () => getFirestore();
 const SITE = () => process.env.SITE_URL || `https://${process.env.GCLOUD_PROJECT}.web.app`;
 const TZ = 'America/Chicago';
-const ptsFor = f => ({ '1v1': 25, '2v2': 40, '3v3': 50, '4v4': 50 }[f] || 75);
+// Player points: 100 for a win, plus 1 bonus point for every point your side scored.
+const WIN_POINTS = 100;
+const earnedFor = (score, won) => (won ? WIN_POINTS : 0) + Math.max(0, score | 0);
 const BAD_TOKEN = ['messaging/registration-token-not-registered', 'messaging/invalid-registration-token', 'messaging/invalid-argument'];
 
 async function nameOf(uid) {
   const d = await db().doc(`users/${uid}`).get();
   return d.exists ? d.data().name : 'A player';
 }
-function sideName(g, side) { return g[side + 'TeamName'] || (side === 'home' ? g.hostName : 'Challengers'); }
+// "Eastside Buckets" for team games; "Chris Evans" or "Chris Evans +2" for pickup games.
+async function sideLabel(g, side) {
+  if (g[side + 'TeamName']) return g[side + 'TeamName'];
+  const ids = g[side] || [];
+  if (!ids.length) return side === 'home' ? g.hostName : 'Challengers';
+  const n = await nameOf(ids[0]);
+  return ids.length > 1 ? `${n} +${ids.length - 1}` : n;
+}
 function when(g) { return g.when.toDate().toLocaleString('en-US', { timeZone: TZ, weekday: 'short', hour: 'numeric', minute: '2-digit' }); }
 
 // Push to every phone/browser a player turned notifications on for. Never throws.
@@ -48,32 +57,28 @@ async function awardResult(ref) {
   return db().runTransaction(async tx => {
     const snap = await tx.get(ref), g = snap.data();
     if (!g || g.status !== 'confirmed' || g.awarded) return null;
-    const hs = g.report.home, as = g.report.away, p = ptsFor(g.format);
+    const hs = g.report.home, as = g.report.away;
     const winner = hs > as ? 'home' : as > hs ? 'away' : null;
+    const earned = { home: earnedFor(hs, winner === 'home'), away: earnedFor(as, winner === 'away') };
     const userRefs = [...g.home, ...g.away].map(u => db().doc(`users/${u}`));
     const teamRefs = ['home', 'away'].map(s => g[s + 'TeamId'] ? db().doc(`teams/${g[s + 'TeamId']}`) : null);
     const users = await Promise.all(userRefs.map(r => tx.get(r)));
     const teams = await Promise.all(teamRefs.map(r => r ? tx.get(r) : null));
-    if (winner) {
-      const loser = winner === 'home' ? 'away' : 'home';
-      users.forEach(u => {
-        if (!u.exists) return;
-        if (g[winner].includes(u.id)) tx.update(u.ref, { rp: FieldValue.increment(p), wins: FieldValue.increment(1) });
-        else if (g[loser].includes(u.id)) tx.update(u.ref, { losses: FieldValue.increment(1) });
-      });
-      teams.forEach((t, i) => {
-        if (!t?.exists) return;
-        const side = i === 0 ? 'home' : 'away';
-        tx.update(t.ref, side === winner ? { rp: FieldValue.increment(p), wins: FieldValue.increment(1) } : { losses: FieldValue.increment(1) });
-      });
-    }
-    tx.update(ref, { status: 'final', awarded: true, final: { home: hs, away: as, winner, pts: winner ? p : 0 }, finalAt: FieldValue.serverTimestamp() });
-    return { winner, p };
+    const change = side => ({ rp: FieldValue.increment(earned[side]), ...(winner ? { [winner === side ? 'wins' : 'losses']: FieldValue.increment(1) } : {}) });
+    users.forEach(u => {
+      if (!u.exists) return;
+      const side = g.home.includes(u.id) ? 'home' : g.away.includes(u.id) ? 'away' : null;
+      if (side) tx.update(u.ref, change(side));
+    });
+    teams.forEach((t, i) => { if (t?.exists) tx.update(t.ref, change(i === 0 ? 'home' : 'away')) });
+    tx.update(ref, { status: 'final', awarded: true, final: { home: hs, away: as, winner, pts: winner ? WIN_POINTS : 0, earned }, finalAt: FieldValue.serverTimestamp() });
+    return { winner, earned };
   });
 }
 
 async function onGameUpdated(before, after, ref) {
   const g = after, link = `game/${ref.id}`, title = `${g.format} at ${g.venue}`;
+  const labels = { home: await sideLabel(g, 'home'), away: await sideLabel(g, 'away') }, sideName = (_, side) => labels[side];
   const joined = (g.players || []).filter(u => !(before.players || []).includes(u) && u !== g.hostUid);
   for (const u of joined) await notify([g.hostUid], { type: 'join', title: `${await nameOf(u)} joined your game`, body: `${title}, ${when(g)}. ${g.players.length} in so far.`, link });
 
@@ -88,7 +93,7 @@ async function onGameUpdated(before, after, ref) {
     const res = await awardResult(ref);
     if (res) {
       const score = `${g.report.home}–${g.report.away}`;
-      await notify(g.players, { type: 'final', title: `Final: ${score}`, body: res.winner ? `${sideName(g, res.winner)} wins. +${res.p} player points to the winners.` : 'A draw. No points this time.', link });
+      await notify(g.players, { type: 'final', title: `Final: ${score}`, body: res.winner ? `${sideName(g, res.winner)} wins. They get ${res.earned[res.winner]} player points (100 for the win + ${res.earned[res.winner] - 100} for points scored). ${sideName(g, res.winner === 'home' ? 'away' : 'home')} gets ${res.earned[res.winner === 'home' ? 'away' : 'home']}.` : `A draw. Everyone gets 1 player point for each point their side scored (${res.earned.home} each).`, link });
     }
   }
 }
@@ -133,4 +138,4 @@ async function sendReminders(now = new Date()) {
   return sent;
 }
 
-module.exports = { ptsFor, awardResult, onGameUpdated, onDirectMessage, onTeamMessage, onTeamRequest, onReport, sendReminders, notify };
+module.exports = { WIN_POINTS, earnedFor, awardResult, onGameUpdated, onDirectMessage, onTeamMessage, onTeamRequest, onReport, sendReminders, notify };

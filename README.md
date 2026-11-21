@@ -201,9 +201,15 @@ Add to Home Screen) and open it from there. Apple only allows web alerts that wa
    (or straight from the scoreboard).
 2. Someone on the **other** side confirms it or disputes it. Teammates can't confirm
    their own side's report.
-3. Once confirmed, the server awards points to every player on the winning side, plus a win,
-   and a loss to the other side. Team games also update both teams' records.
-   Points: 1v1 = 25, 2v2 = 40, 3v3 and 4v4 = 50, 5v5 and up = 75. A tie awards nothing.
+3. Once confirmed, the server gives every player:
+   - **100 player points for a win**, plus
+   - **1 bonus player point for every point their side scored**, win or lose.
+
+   Example: a 21–17 win gives each winner 121 points (100 + 21) and each player on the other
+   side 17. A tie gives no win bonus, just the scored points. Wins and losses go on records,
+   and team games add the same points to both teams' totals. In team games everyone on a
+   side gets that side's score as their bonus, because the app records team scores, not
+   who scored each point.
 4. A disputed score awards nothing. Players talk it out and report again.
 
 ## Safety: reports and blocks
@@ -283,7 +289,7 @@ If a security test fails, nothing is published.
 - **113 security-rule checks**: for example, nobody can give themselves points, confirm
   their own side's score, join a team without the captain's approval, read another
   team's chat or other people's messages, or message someone who blocked them.
-- **21 server-code checks**: points awarded once and only to winners, ties and disputes,
+- **22 server-code checks**: points awarded once and only to winners, ties and disputes,
   team records, notifications, reminders, and auto-hiding reported posts.
 
 With Java installed:

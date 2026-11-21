@@ -147,22 +147,24 @@ export class OAuthProvider { constructor(id) { this.providerId = id } addScope()
 export const initializeApp = () => ({ name: 'preview' });
 
 /* ───────── Server behaviour (mirrors functions/lib.js) ───────── */
-const ptsFor = f => ({ '1v1': 25, '2v2': 40, '3v3': 50, '4v4': 50 }[f] || 75);
+// Player points: 100 for a win, plus 1 bonus point for every point your side scored.
+const WIN_POINTS = 100;
+const earnedFor = (score, won) => (won ? WIN_POINTS : 0) + Math.max(0, score | 0);
 const nameOf = uid => get('users/' + uid)?.name || 'A player';
-const sideName = (g, s) => g[s + 'TeamName'] || (s === 'home' ? g.hostName : 'Challengers');
+const sideName = (g, s) => { if (g[s + 'TeamName']) return g[s + 'TeamName']; const ids = g[s] || []; if (!ids.length) return s === 'home' ? g.hostName : 'Challengers'; return nameOf(ids[0]) + (ids.length > 1 ? ` +${ids.length - 1}` : '') };
 const whenText = g => g.when.toDate().toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 function notify(uids, n) { [...new Set(uids)].filter(Boolean).forEach(u => put(`users/${u}/notifications/${autoId()}`, { type: n.type, title: n.title, body: n.body, link: n.link || '', read: false, at: Timestamp.now() })) }
 function award(path) {
   const g = get(path); if (!g || g.status !== 'confirmed' || g.awarded) return null;
-  const hs = g.report.home, as = g.report.away, p = ptsFor(g.format), winner = hs > as ? 'home' : as > hs ? 'away' : null;
-  if (winner) {
-    const loser = winner === 'home' ? 'away' : 'home';
-    g[winner].forEach(u => { const d = get('users/' + u); if (d) put('users/' + u, { ...d, rp: (d.rp || 0) + p, wins: (d.wins || 0) + 1 }) });
-    g[loser].forEach(u => { const d = get('users/' + u); if (d) put('users/' + u, { ...d, losses: (d.losses || 0) + 1 }) });
-    ['home', 'away'].forEach(s => { const id = g[s + 'TeamId'], t = id && get('teams/' + id); if (t) put('teams/' + id, s === winner ? { ...t, rp: (t.rp || 0) + p, wins: (t.wins || 0) + 1 } : { ...t, losses: (t.losses || 0) + 1 }) });
-  }
-  put(path, { ...g, status: 'final', awarded: true, final: { home: hs, away: as, winner, pts: winner ? p : 0 }, finalAt: Timestamp.now() });
-  return { winner, p };
+  const hs = g.report.home, as = g.report.away, winner = hs > as ? 'home' : as > hs ? 'away' : null;
+  const earned = { home: earnedFor(hs, winner === 'home'), away: earnedFor(as, winner === 'away') };
+  const change = (d, side) => ({ ...d, rp: (d.rp || 0) + earned[side], ...(winner ? (winner === side ? { wins: (d.wins || 0) + 1 } : { losses: (d.losses || 0) + 1 }) : {}) });
+  ['home', 'away'].forEach(side => {
+    g[side].forEach(u => { const d = get('users/' + u); if (d) put('users/' + u, change(d, side)) });
+    const id = g[side + 'TeamId'], t = id && get('teams/' + id); if (t) put('teams/' + id, change(t, side));
+  });
+  put(path, { ...g, status: 'final', awarded: true, final: { home: hs, away: as, winner, pts: winner ? WIN_POINTS : 0, earned }, finalAt: Timestamp.now() });
+  return { winner, earned };
 }
 const BOTS = new Set(['marcus', 'devin', 'chris', 'tyler', 'andre', 'riley', 'sam']);
 const human = () => auth.currentUser?.uid;
@@ -185,7 +187,7 @@ function gameChanged(path, b, g) {
   if (b.status === 'reported' && g.status === 'disputed') notify(g.players, { type: 'disputed', title: 'Score disputed', body: `${nameOf(g.responseBy)} disputed the score for ${title}. Talk it out, then report it again.`, link });
   if (b.status !== 'confirmed' && g.status === 'confirmed') {
     const res = award(path);
-    if (res) notify(g.players, { type: 'final', title: `Final: ${g.report.home}–${g.report.away}`, body: res.winner ? `${sideName(g, res.winner)} wins. +${res.p} player points to the winners.` : 'A draw. No points this time.', link });
+    if (res) notify(g.players, { type: 'final', title: `Final: ${g.report.home}–${g.report.away}`, body: res.winner ? `${sideName(g, res.winner)} wins. They get ${res.earned[res.winner]} player points (100 for the win + ${res.earned[res.winner] - 100} for points scored). ${sideName(g, res.winner === 'home' ? 'away' : 'home')} gets ${res.earned[res.winner === 'home' ? 'away' : 'home']}.` : `A draw. Everyone gets 1 player point for each point their side scored (${res.earned.home} each).`, link });
   }
 }
 function joinRequested(tid, uid, r) {
@@ -239,8 +241,8 @@ function seed() {
   game('devin2v2', { hostUid: 'devin', hostName: 'Devin Carter', format: '2v2', need: 'Open challenge', venue: 'Givens District Park', when: at(3, 18), home: ['devin'] });
   game('lastnight', { hostUid: 'you', hostName: 'Jordan Davis', format: '1v1', need: 'Open challenge', venue: 'Mueller Lake Park', when: ts(now - 2 * H), home: ['you'], away: ['chris'] });
   game('needsconfirm', { hostUid: 'devin', hostName: 'Devin Carter', format: '1v1', need: 'Open challenge', venue: 'Givens District Park', when: ts(now - D), home: ['devin'], away: ['you'], status: 'reported', report: { by: 'devin', side: 'home', home: 21, away: 18, at: ts(now - 20 * H) } });
-  game('lostmarcus', { hostUid: 'you', hostName: 'Jordan Davis', format: '1v1', need: 'Open challenge', venue: 'Pease Park Courts', when: ts(now - 5 * D), home: ['you'], away: ['marcus'], status: 'final', awarded: true, report: { by: 'marcus', side: 'away', home: 15, away: 21, at: ts(now - 5 * D) }, final: { home: 15, away: 21, winner: 'away', pts: 25 } });
-  game('beatsam', { hostUid: 'sam', hostName: 'Sam Patel', format: '1v1', need: 'Open challenge', venue: 'Mueller Lake Park', when: ts(now - 8 * D), home: ['sam'], away: ['you'], status: 'final', awarded: true, report: { by: 'you', side: 'away', home: 12, away: 21, at: ts(now - 8 * D) }, final: { home: 12, away: 21, winner: 'away', pts: 25 } });
+  game('lostmarcus', { hostUid: 'you', hostName: 'Jordan Davis', format: '1v1', need: 'Open challenge', venue: 'Pease Park Courts', when: ts(now - 5 * D), home: ['you'], away: ['marcus'], status: 'final', awarded: true, report: { by: 'marcus', side: 'away', home: 15, away: 21, at: ts(now - 5 * D) }, final: { home: 15, away: 21, winner: 'away', pts: 100, earned: { home: 15, away: 121 } } });
+  game('beatsam', { hostUid: 'sam', hostName: 'Sam Patel', format: '1v1', need: 'Open challenge', venue: 'Mueller Lake Park', when: ts(now - 8 * D), home: ['sam'], away: ['you'], status: 'final', awarded: true, report: { by: 'you', side: 'away', home: 12, away: 21, at: ts(now - 8 * D) }, final: { home: 12, away: 21, winner: 'away', pts: 100, earned: { home: 12, away: 121 } } });
   const post = (id, uid, kind, caption, art, likedBy, ago) => put('posts/' + id, { uid, name: users[uid][0], city: 'Austin', kind, caption, sport: art === 'football' ? 'Flag football' : 'Basketball', art, mediaUrl: null, mediaType: null, likedBy, createdAt: ts(now - ago) });
   post('p1', 'marcus', 'Highlight', 'Late night runs at Pease. No shortcuts. #HoopLife', 'court', ['devin', 'tyler'], 2 * H);
   post('p2', 'riley', 'Highlight', 'Sunday is our kind of day. One team, one more rep. #ATXOutlaws', 'football', ['andre', 'you'], 5 * H);
@@ -257,9 +259,9 @@ function seed() {
   convo('marcus', [['marcus', 'Run it back Saturday? Pease Park, 7pm.', D], ['you', 'I’m in. 1v1 to 21?', D - 600e3], ['marcus', 'Bet. Bring your jumper this time.', 2 * H]]);
   convo('devin', [['devin', 'Confirm our game from yesterday when you get a sec.', 20 * H]]);
   const n = (id, type, title, body, link, read, ago) => put(`users/you/notifications/${id}`, { type, title, body, link, read, at: ts(now - ago) });
-  n('n1', 'confirm', 'Confirm the final score', 'Devin Carter reported Devin Carter 21, Challengers 18. Confirm it or dispute it.', 'game/needsconfirm', false, 20 * H);
+  n('n1', 'confirm', 'Confirm the final score', 'Devin Carter reported Devin Carter 21, Jordan Davis 18. Confirm it or dispute it.', 'game/needsconfirm', false, 20 * H);
   n('n2', 'team', 'Chris Evans wants to join Eastside Buckets', 'Open the team to approve or decline.', 'team/eastside', false, 3 * H);
-  n('n3', 'final', 'Final: 15–21', 'Marcus Williams wins. +25 player points to the winners.', 'game/lostmarcus', true, 5 * D);
+  n('n3', 'final', 'Final: 15–21', 'Marcus Williams wins. They get 121 player points (100 for the win + 21 for points scored). Jordan Davis gets 15.', 'game/lostmarcus', true, 5 * D);
   ['marcus', 'riley'].forEach(u => put(`users/you/following/${u}`, { at: ts(now - 10 * D) }));
   const wk = (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10) })();
   put(`users/you/workouts/${wk}_handles`, { challenge: 'handles', week: wk, fp: 75, at: ts(now - 2 * H) });

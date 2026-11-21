@@ -86,3 +86,8 @@
   .rk-n{grid-area:n}.rk-name{grid-area:name}.rk-val{grid-area:val}.rk-track{grid-area:bar}
   .rk-tip{left:8px;white-space:normal;max-width:calc(100% - 16px)}
 }
+.earned{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.earned div{background:var(--surface-2);border-radius:10px;padding:10px 12px;display:grid;gap:2px;min-width:0}
+.earned span{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.earned b{font:800 24px var(--display);color:var(--gold);font-variant-numeric:tabular-nums}
+.earned small{font-size:11px;color:var(--muted)}
